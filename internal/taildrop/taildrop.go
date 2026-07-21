@@ -188,7 +188,7 @@ func (m *Manager) SendFile(ctx context.Context, targetID ipn.StableNodeID, fileP
 		defer f.Close()
 		defer close(progress)
 
-		pr := &progressReader{r: f, total: total, ch: progress}
+		pr := &progressReader{r: f, total: total, ch: progress, name: name}
 		err := m.ts.LocalClient().PushFile(ctx, targetID, total,
 			name, contentType, pr)
 		if err != nil {

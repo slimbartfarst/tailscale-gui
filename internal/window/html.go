@@ -279,6 +279,22 @@ const indexHTML = `<!DOCTYPE html>
     </div>
   </section>
 
+  <!-- Advertised subnets -->
+  <section>
+    <h2>Advertised subnets</h2>
+    <div class="card" id="routes-list">
+      <div class="empty">Loading…</div>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <input id="route-input" type="text" placeholder="192.168.1.0/24"
+             style="background:var(--surface); border:1px solid var(--border); color:var(--text);
+                    border-radius:6px; padding:5px 10px; font-size:13px; font-family:monospace; width:180px;"
+             onkeydown="if(event.key==='Enter') addRoute()">
+      <button class="primary" onclick="addRoute()">Advertise</button>
+      <span id="route-msg" style="font-size:12px; color:var(--muted)"></span>
+    </div>
+  </section>
+
   <!-- Peers -->
   <section>
     <h2>Peers</h2>
@@ -298,11 +314,18 @@ let lastData = null;
 
 async function refresh() {
   try {
-    const r = await fetch('/api/status');
-    if (!r.ok) throw new Error(r.statusText);
-    const d = await r.json();
+    const [statusR, routesR] = await Promise.all([
+      fetch('/api/status'),
+      fetch('/api/routes'),
+    ]);
+    if (!statusR.ok) throw new Error(statusR.statusText);
+    const d = await statusR.json();
     lastData = d;
     render(d);
+    if (routesR.ok) {
+      const routes = await routesR.json();
+      renderRoutes(routes);
+    }
     document.getElementById('last-updated').textContent =
       'Updated ' + new Date().toLocaleTimeString();
   } catch(e) {
@@ -368,6 +391,13 @@ function render(d) {
     const row = document.createElement('div');
     row.className = 'row';
     row.id = 'peer-' + safeId(ip);
+    const sendBtn = p.Online && p.ID
+      ? `<button title="Send a file to ${esc(p.HostName)} via Taildrop"
+               onclick="sendFile('${esc(p.ID)}', '${esc(p.HostName)}')">Send file…</button>`
+      : '';
+    const pingBtn = p.Online && ip
+      ? `<button onclick="pingPeer('${esc(ip)}')">Ping</button>`
+      : '';
     row.innerHTML = ` + "`" + `
       <span class="dot ${p.Online ? 'online' : 'offline'}"></span>
       <span class="peer-name">${esc(p.HostName)}</span>
@@ -375,7 +405,7 @@ function render(d) {
       <span class="peer-ip" title="Click to copy" style="cursor:pointer"
             onclick="copyIP('${esc(ip)}')">${esc(ip)}</span>
       <span class="ping-result" id="ping-${safeId(ip)}"></span>
-      ${p.Online && ip ? '<button onclick="pingPeer(\''+esc(ip)+'\')">Ping</button>' : ''}
+      ${pingBtn}${sendBtn}
     ` + "`" + `;
     list.appendChild(row);
   });
@@ -421,6 +451,102 @@ async function pingPeer(ip) {
     }
   } catch(e) {
     if (el) { el.textContent = '✗ failed'; el.style.color = 'var(--red)'; }
+  }
+}
+
+async function sendFile(peerID, hostname) {
+  const btn = event.target;
+  const origText = btn.textContent;
+  btn.textContent = 'opening…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/send-file?id=' + encodeURIComponent(peerID), {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      alert('Send error: ' + d.error);
+    } else {
+      // Picker is now open on the desktop — restore button after a moment
+      btn.textContent = 'picker open';
+      setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+      return;
+    }
+  } catch(e) {
+    alert('Request failed: ' + e);
+  }
+  btn.textContent = origText;
+  btn.disabled = false;
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+function renderRoutes(routes) {
+  const list = document.getElementById('routes-list');
+  if (!routes || routes.length === 0) {
+    list.innerHTML = '<div class="empty">No subnets advertised. Enter a CIDR below to start.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  routes.forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const statusColor = r.approved ? 'var(--green)' : 'var(--amber)';
+    const statusText  = r.approved ? 'approved ✓'   : 'pending approval…';
+    row.innerHTML = ` + "`" + `
+      <span style="font-family:monospace; font-size:13px; color:var(--accent); min-width:160px">${esc(r.prefix)}</span>
+      <span style="flex:1; font-size:12px; color:var(--muted)">${esc(r.label)}</span>
+      <span style="font-size:12px; color:${statusColor}; min-width:130px; text-align:right">${statusText}</span>
+      <button class="danger" onclick="removeRoute('${esc(r.prefix)}')">Remove</button>
+    ` + "`" + `;
+    list.appendChild(row);
+  });
+}
+
+async function addRoute() {
+  const input = document.getElementById('route-input');
+  const msg   = document.getElementById('route-msg');
+  const cidr  = input.value.trim();
+  if (!cidr) { msg.textContent = 'Enter a CIDR prefix first.'; return; }
+
+  msg.textContent = 'adding…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/routes/add?cidr=' + encodeURIComponent(cidr), {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      msg.textContent = '✗ ' + d.error;
+      msg.style.color = 'var(--red)';
+    } else {
+      msg.textContent = '✓ advertising ' + cidr;
+      msg.style.color = 'var(--green)';
+      input.value = '';
+      setTimeout(() => { msg.textContent = ''; }, 4000);
+      setTimeout(refresh, 600);
+    }
+  } catch(e) {
+    msg.textContent = '✗ request failed';
+    msg.style.color = 'var(--red)';
+  }
+}
+
+async function removeRoute(cidr) {
+  const msg = document.getElementById('route-msg');
+  msg.textContent = 'removing ' + cidr + '…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/routes/remove?cidr=' + encodeURIComponent(cidr), {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      msg.textContent = '✗ ' + d.error;
+      msg.style.color = 'var(--red)';
+    } else {
+      msg.textContent = '✓ removed ' + cidr;
+      msg.style.color = 'var(--green)';
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+      setTimeout(refresh, 600);
+    }
+  } catch(e) {
+    msg.textContent = '✗ request failed';
+    msg.style.color = 'var(--red)';
   }
 }
 

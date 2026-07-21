@@ -246,3 +246,26 @@ func (c *Client) LocalClient() *local.Client {
 func (c *Client) PushFile(ctx context.Context, target ipn.StableNodeID, size int64, name, contentType string, r io.Reader) error {
 	return c.lc.PushFile(ctx, target, size, name, contentType, r)
 }
+
+// ── Subnet route advertising ──────────────────────────────────────────────────
+
+// AdvertisedRoutes returns the prefixes this device is currently advertising.
+func (c *Client) AdvertisedRoutes(ctx context.Context) ([]netip.Prefix, error) {
+	prefs, err := c.lc.GetPrefs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return prefs.AdvertiseRoutes, nil
+}
+
+// SetAdvertisedRoutes replaces the set of advertised routes.
+// Pass nil or an empty slice to stop advertising everything.
+func (c *Client) SetAdvertisedRoutes(ctx context.Context, prefixes []netip.Prefix) error {
+	_, err := c.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
+		AdvertiseRoutesSet: true,
+		Prefs: ipn.Prefs{
+			AdvertiseRoutes: prefixes,
+		},
+	})
+	return err
+}

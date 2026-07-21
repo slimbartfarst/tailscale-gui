@@ -18,14 +18,37 @@ No networking code written here. The daemon does all the hard work.
 | Live connection status in tray | ✅ |
 | Per-peer list with online indicator | ✅ |
 | Click peer IP to copy to clipboard | ✅ |
-| Exit node selection submenu | ✅ |
+| Exit node selection submenu (with checkmarks) | ✅ |
 | MagicDNS / Accept routes / Shields up toggles | ✅ |
 | Desktop notifications on state change | ✅ |
 | Taildrop file receive (auto-save to ~/Downloads/Taildrop) | ✅ |
-| Taildrop file send (via zenity file picker) | ✅ |
-| Status window (full dashboard in browser) | ✅ |
+| Taildrop send — multi-file picker (zenity) | ✅ |
+| Taildrop send — peer picker (list dialog + text fallback + fuzzy match) | ✅ |
+| Taildrop send — per-peer "Send file…" in tray submenu | ✅ |
+| Taildrop send — progress bar (zenity --progress) | ✅ |
+| Taildrop send — from status window browser UI | ✅ |
+| Subnet route advertising — tray submenu with approval status | ✅ |
+| Subnet route advertising — local interface suggestions | ✅ |
+| Subnet route advertising — manual CIDR entry with validation | ✅ |
+| Subnet route advertising — remove from tray | ✅ |
+| Subnet route advertising — add/remove from status window | ✅ |
+| Status window (full dashboard in browser, auto-refresh 5s) | ✅ |
 | Per-peer ping from status window | ✅ |
 | Autostart via XDG desktop entry | ✅ |
+
+---
+
+## What to build next
+
+- **SSH peer launch** — add an "SSH…" button per-peer in the status window
+  that runs `xterm -e ssh <peer-hostname>` (or the user's preferred terminal
+  via `$TERMINAL`).
+- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
+  the auth URL from `st.AuthURL` automatically in the browser.
+- **Taildrop receive — "Open file" notification action** — use `gdbus` or
+  `go-notify` to attach an action button to the received-file notification.
+- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
+  distribution with sandboxed access to the Tailscale socket.
 
 ---
 
@@ -68,14 +91,20 @@ tailscale-gui/
 │   ├── client/client.go            Wraps tailscale.com/client/local
 │   ├── systray/
 │   │   ├── systray.go              Tray icon, menus, event loop
-│   │   └── icons.go                Embedded PNGs + OS helpers
+│   │   └── icons.go                Embedded PNGs + OS helpers (browser, clipboard, zenity)
 │   ├── config/config.go            ~/.config/tailscale-gui/config.json
 │   ├── notify/notify.go            Desktop notifications (notify-send)
+│   ├── picker/
+│   │   ├── picker.go               File picker, peer picker, progress dialog (zenity)
+│   │   └── picker_test.go          Tests for matchPeer, osLabel, firstIP
+│   ├── routes/
+│   │   ├── routes.go               Subnet route advertising (read/write/suggest/validate)
+│   │   └── routes_test.go          Tests for Validate, ParsePrefix, isPrivate, Suggest
 │   ├── taildrop/taildrop.go        File send / receive
 │   └── window/
-│       ├── window.go               Localhost HTTP status server
-│       └── html.go                 Self-contained dashboard HTML/JS
-├── assets/icons/                   32×32 PNG tray icons
+│       ├── window.go               Localhost HTTP status server + API endpoints
+│       └── html.go                 Self-contained dashboard HTML/CSS/JS
+├── assets/icons/                   32×32 PNG tray icons (replace placeholders)
 ├── scripts/generate_icons.py       Generates placeholder icons
 ├── packaging/tailscale-gui.desktop XDG autostart entry
 └── Makefile
@@ -180,16 +209,18 @@ Then `make build`. The icons are embedded into the binary via `go:embed`.
 
 ## What to build next
 
-- **Peer-picker dialog for Taildrop send** — replace the "first online peer"
-  stub in `systray.go:doSendFile()` with a `zenity --list` dialog.
 - **Subnet route advertising** — `tailscale.com/client/local` exposes
-  `AdvertiseRoutes`; add a submenu to toggle advertised prefixes.
-- **SSH peer launch** — add an "SSH…" button per-peer that runs
-  `xterm -e ssh <hostname>`.
-- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and
-  open the auth URL from `st.AuthURL`.
+  `AdvertiseRoutes`; add a submenu to toggle which local subnets this device
+  advertises to the tailnet.
+- **SSH peer launch** — add an "SSH…" button per-peer in the status window
+  that runs `xterm -e ssh <hostname>` (or the user's preferred terminal).
+- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
+  the auth URL from `st.AuthURL` automatically in the browser.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
-  can be distributed via Flathub.
+  can be distributed via Flathub with sandboxed access to the Tailscale socket.
+- **Taildrop receive notifications with "Open file" action** — use
+  `gdbus` or `go-notify` to attach an action button to the notification
+  that opens the saved file directly.
 
 ---
 

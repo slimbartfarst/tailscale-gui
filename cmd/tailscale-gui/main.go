@@ -15,6 +15,7 @@ import (
 	"github.com/yourname/tailscale-gui/internal/client"
 	"github.com/yourname/tailscale-gui/internal/config"
 	"github.com/yourname/tailscale-gui/internal/notify"
+	"github.com/yourname/tailscale-gui/internal/routes"
 	"github.com/yourname/tailscale-gui/internal/systray"
 	"github.com/yourname/tailscale-gui/internal/taildrop"
 	"github.com/yourname/tailscale-gui/internal/window"
@@ -69,6 +70,45 @@ func main() {
 
 	// ── Systray (blocks; owns main thread) ────────────────────────────────────
 	app := systray.New(ctx, tsClient, cfg, notifier, tdrop, win)
+
+	// Wire the browser "Send file" button back into the systray send flow.
+	win.SendFileFn = app.SendFileToPeerID
+
+	// Wire subnet route callbacks so the browser dashboard can read/write routes.
+	rm := routes.New(tsClient)
+	win.RoutesFn = func(c context.Context) ([]window.RouteEntry, error) {
+		rs, err := rm.Current(c)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]window.RouteEntry, len(rs))
+		for i, r := range rs {
+			out[i] = window.RouteEntry{
+				Prefix:   r.Prefix.String(),
+				Approved: r.Approved,
+				Label:    r.Label,
+			}
+		}
+		return out, nil
+	}
+	win.AddRouteFn = func(c context.Context, cidr string) error {
+		pfx, err := routes.ParsePrefix(cidr)
+		if err != nil {
+			return err
+		}
+		if err := routes.Validate(pfx.String()); err != nil {
+			return err
+		}
+		return rm.Add(c, pfx)
+	}
+	win.RemoveRouteFn = func(c context.Context, cidr string) error {
+		pfx, err := routes.ParsePrefix(cidr)
+		if err != nil {
+			return err
+		}
+		return rm.Remove(c, pfx)
+	}
+
 	app.Run()
 
 	log.Println("goodbye")

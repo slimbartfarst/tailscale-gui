@@ -20,6 +20,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -28,6 +29,7 @@ import (
 	"github.com/yourname/tailscale-gui/internal/client"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/types/ping"
 )
 
 //go:embed static
@@ -35,11 +37,27 @@ var staticFS embed.FS
 
 // Manager owns the status window HTTP server.
 type Manager struct {
-	ts       *client.Client
-	port     int
-	once     sync.Once
-	addr     string // resolved listen address, e.g. "127.0.0.1:54321"
-	ctx      context.Context
+	ts         *client.Client
+	port       int
+	once       sync.Once
+	addr       string
+	ctx        context.Context
+	// SendFileFn is called when the browser clicks "Send file" on a peer.
+	SendFileFn func(targetID string)
+	// RoutesFn returns current advertised routes as [{prefix, approved, label}].
+	// Set by the caller after construction.
+	RoutesFn func(ctx context.Context) ([]RouteEntry, error)
+	// AddRouteFn advertises a new prefix (CIDR string).
+	AddRouteFn func(ctx context.Context, cidr string) error
+	// RemoveRouteFn stops advertising a prefix (CIDR string).
+	RemoveRouteFn func(ctx context.Context, cidr string) error
+}
+
+// RouteEntry is the wire format for advertised routes sent to the browser.
+type RouteEntry struct {
+	Prefix   string `json:"prefix"`
+	Approved bool   `json:"approved"`
+	Label    string `json:"label"`
 }
 
 // New creates a Manager. port=0 picks a random free port.
@@ -85,6 +103,10 @@ func (m *Manager) start() (string, error) {
 	mux.HandleFunc("/api/clear-exit-node", m.handleClearExitNode)
 	mux.HandleFunc("/api/set-pref", m.handleSetPref)
 	mux.HandleFunc("/api/ping", m.handlePing)
+	mux.HandleFunc("/api/send-file", m.handleSendFile)
+	mux.HandleFunc("/api/routes", m.handleRoutes)
+	mux.HandleFunc("/api/routes/add", m.handleAddRoute)
+	mux.HandleFunc("/api/routes/remove", m.handleRemoveRoute)
 
 	srv := &http.Server{
 		Handler:      mux,
@@ -234,22 +256,98 @@ func (m *Manager) handleSetPref(w http.ResponseWriter, r *http.Request) {
 
 // handlePing pings a peer by its Tailscale IP and returns the result.
 func (m *Manager) handlePing(w http.ResponseWriter, r *http.Request) {
-	ip := r.URL.Query().Get("ip")
-	if ip == "" {
+	ipStr := r.URL.Query().Get("ip")
+	if ipStr == "" {
 		http.Error(w, "missing ip", http.StatusBadRequest)
+		return
+	}
+
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		http.Error(w, "invalid ip: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 
-	result, err := m.ts.LocalClient().Ping(ctx, ip, "ts")
+	result, err := m.ts.LocalClient().Ping(ctx, addr, ping.TypeTailscale)
 	if err != nil {
 		writeResult(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// handleSendFile triggers the file picker → send flow for a specific peer.
+// The actual work happens in a goroutine via SendFileFn (set by systray.App).
+// The browser gets an immediate 202 Accepted; progress shows via notifications.
+func (m *Manager) handleSendFile(w http.ResponseWriter, r *http.Request) {
+	targetID := r.URL.Query().Get("id")
+	if targetID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if m.SendFileFn == nil {
+		http.Error(w, "send not configured", http.StatusNotImplemented)
+		return
+	}
+	// Fire-and-forget: the picker dialog blocks in its own goroutine.
+	go m.SendFileFn(targetID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "picker opening"})
+}
+
+// handleRoutes returns the current advertised routes as JSON.
+func (m *Manager) handleRoutes(w http.ResponseWriter, r *http.Request) {
+	if m.RoutesFn == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]RouteEntry{})
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
+	defer cancel()
+	entries, err := m.RoutesFn(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(entries)
+}
+
+// handleAddRoute advertises a new subnet route.
+func (m *Manager) handleAddRoute(w http.ResponseWriter, r *http.Request) {
+	cidr := r.URL.Query().Get("cidr")
+	if cidr == "" {
+		http.Error(w, "missing cidr", http.StatusBadRequest)
+		return
+	}
+	if m.AddRouteFn == nil {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
+	defer cancel()
+	writeResult(w, m.AddRouteFn(ctx, cidr))
+}
+
+// handleRemoveRoute stops advertising a subnet route.
+func (m *Manager) handleRemoveRoute(w http.ResponseWriter, r *http.Request) {
+	cidr := r.URL.Query().Get("cidr")
+	if cidr == "" {
+		http.Error(w, "missing cidr", http.StatusBadRequest)
+		return
+	}
+	if m.RemoveRouteFn == nil {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
+	defer cancel()
+	writeResult(w, m.RemoveRouteFn(ctx, cidr))
 }
 
 func writeResult(w http.ResponseWriter, err error) {

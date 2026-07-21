@@ -4,30 +4,43 @@
 //
 // Menu layout:
 //   Status: Connected ✓
-//   ─────────────────
+//   ─────────────────────────────────
 //   This device: 100.x.x.x
-//   ─────────────────
+//   ─────────────────────────────────
 //   Connect / Disconnect
-//   ─────────────────
-//   Peers ▶  [submenu: online peers with IP copy]
-//   Exit nodes ▶  [submenu: None + list of exit nodes]
-//   ─────────────────
+//   ─────────────────────────────────
+//   Peers (N online) ▶
+//     hostname  100.x.x.x  [OS]
+//       Send file…
+//   Exit nodes ▶
+//     ✓ None
+//       peer-name  100.x.x.x
+//   ─────────────────────────────────
+//   Advertise subnets (N) ▶
+//     ✓ 192.168.1.0/24  [approved ✓]
+//       Remove
+//     Add route…
+//   ─────────────────────────────────
 //   ✓ Use Tailscale DNS
 //   ✓ Accept subnet routes
 //     Shields up
-//   ─────────────────
-//   Send file…        [opens file picker → Taildrop]
-//   Taildrop folder   [opens receive dir in file manager]
-//   ─────────────────
+//   ─────────────────────────────────
+//   Send file…
+//   Open Taildrop folder
+//   ─────────────────────────────────
+//   Open status window…
 //   Admin console…
-//   ─────────────────
+//   ─────────────────────────────────
 //   Quit
 package systray
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +48,8 @@ import (
 	"github.com/yourname/tailscale-gui/internal/client"
 	"github.com/yourname/tailscale-gui/internal/config"
 	"github.com/yourname/tailscale-gui/internal/notify"
+	"github.com/yourname/tailscale-gui/internal/picker"
+	"github.com/yourname/tailscale-gui/internal/routes"
 	"github.com/yourname/tailscale-gui/internal/taildrop"
 	"github.com/yourname/tailscale-gui/internal/window"
 	"tailscale.com/ipn"
@@ -50,14 +65,17 @@ type App struct {
 	notifier *notify.Notifier
 	tdrop    *taildrop.Manager
 	win      *window.Manager
+	rm       *routes.Manager // subnet route advertising
 
 	// ── static menu items ────────────────────────────────────────────────────
 	mStatus       *systray.MenuItem
 	mSelf         *systray.MenuItem
 	mConnect      *systray.MenuItem
 	mDisconnect   *systray.MenuItem
-	mPeers        *systray.MenuItem // parent of peer submenu
-	mExitNodes    *systray.MenuItem // parent of exit node submenu
+	mPeers        *systray.MenuItem
+	mExitNodes    *systray.MenuItem
+	mAdvertise    *systray.MenuItem // "Advertise subnets ▶" parent
+	mAddRoute     *systray.MenuItem // "Add route…" inside advertise submenu
 	mAcceptDNS    *systray.MenuItem
 	mAcceptRoutes *systray.MenuItem
 	mShieldsUp    *systray.MenuItem
@@ -71,18 +89,26 @@ type App struct {
 	mu            sync.Mutex
 	peerItems     []*peerItem     // live peer submenu items
 	exitNodeItems []*exitNodeItem // live exit node submenu items
+	routeItems    []*routeItem    // live advertised-route submenu items
 	currentState  ipn.State
 	activeExitID  ipn.StableNodeID
 }
 
 type peerItem struct {
-	peer *ipnstate.PeerStatus
-	item *systray.MenuItem
+	peer     *ipnstate.PeerStatus
+	item     *systray.MenuItem
+	sendItem *systray.MenuItem // "Send file…" sub-item
 }
 
 type exitNodeItem struct {
 	peer *ipnstate.PeerStatus
 	item *systray.MenuItem
+}
+
+type routeItem struct {
+	route    routes.Route
+	item     *systray.MenuItem // the checkbox item showing the prefix
+	removeIt *systray.MenuItem // "Remove" sub-item
 }
 
 // New creates the App. Call Run() from main().
@@ -103,6 +129,7 @@ func New(
 		notifier: notifier,
 		tdrop:    tdrop,
 		win:      win,
+		rm:       routes.New(ts),
 	}
 }
 
@@ -141,6 +168,11 @@ func (a *App) onReady() {
 	// Exit nodes submenu (populated dynamically)
 	a.mExitNodes = systray.AddMenuItem("Exit nodes", "Route all traffic through a peer")
 	a.mExitNodes.Disable()
+	systray.AddSeparator()
+
+	// Advertise subnets submenu (populated dynamically)
+	a.mAdvertise = systray.AddMenuItem("Advertise subnets", "Share local subnets with the tailnet")
+	a.mAddRoute = a.mAdvertise.AddSubMenuItem("  Add route…", "Advertise a new subnet prefix")
 	systray.AddSeparator()
 
 	// Toggles
@@ -193,6 +225,7 @@ func (a *App) initialLoad() {
 		return
 	}
 	a.applyPrefs(prefs)
+	a.refreshRoutes(ctx)
 }
 
 // ── State watching ────────────────────────────────────────────────────────────
@@ -258,6 +291,7 @@ func (a *App) refreshPeers() {
 		return
 	}
 	a.applyFullStatus(st)
+	a.refreshRoutes(ctx)
 }
 
 // ── Status application ────────────────────────────────────────────────────────
@@ -374,16 +408,20 @@ func (a *App) applyPrefs(prefs *ipn.Prefs) {
 // ── Peer submenu ──────────────────────────────────────────────────────────────
 
 // rebuildPeerSubmenu replaces the peer submenu items with the current peer list.
-// Each peer shows its hostname and first Tailscale IP; clicking it copies the IP.
+//
+// Each peer entry has two sub-items:
+//   - The peer row itself (hostname + IP) — click to copy IP
+//   - "Send file…" — opens the file picker and sends directly to that peer
 func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Hide old items. We can't remove systray items, so we hide them and
-	// accumulate. On most desktops the list is short enough that this is fine;
-	// for very large tailnets you'd want to page or filter.
+	// Hide old items (systray doesn't support removal).
 	for _, pi := range a.peerItems {
 		pi.item.Hide()
+		if pi.sendItem != nil {
+			pi.sendItem.Hide()
+		}
 	}
 	a.peerItems = a.peerItems[:0]
 
@@ -398,15 +436,19 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 		if len(p.TailscaleIPs) > 0 {
 			ip = p.TailscaleIPs[0].String()
 		}
-		label := fmt.Sprintf("  %s  %s", p.HostName, ip)
-		tooltip := fmt.Sprintf("OS: %s | Active: %v", p.OS, p.Active)
 
+		// Peer row — parent item (click → copy IP)
+		label := fmt.Sprintf("  %s  %s  [%s]", p.HostName, ip, osLabel(p.OS))
+		tooltip := fmt.Sprintf("Click to copy %s", ip)
 		item := a.mPeers.AddSubMenuItem(label, tooltip)
 
-		pi := &peerItem{peer: p, item: item}
+		// "  Send file…" — nested under the peer row
+		sendItem := item.AddSubMenuItem("  Send file…", fmt.Sprintf("Send a file to %s via Taildrop", p.HostName))
+
+		pi := &peerItem{peer: p, item: item, sendItem: sendItem}
 		a.peerItems = append(a.peerItems, pi)
 
-		// Click → copy IP to clipboard
+		// Copy-IP click handler
 		go func(copyIP string, mi *systray.MenuItem) {
 			for {
 				select {
@@ -424,6 +466,21 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 				}
 			}
 		}(ip, item)
+
+		// Send-file click handler — bypasses the peer picker (target is known)
+		go func(target *ipnstate.PeerStatus, mi *systray.MenuItem) {
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case _, ok := <-mi.ClickedCh:
+					if !ok {
+						return
+					}
+					go a.doSendFileToPeer(target)
+				}
+			}
+		}(p, sendItem)
 	}
 
 	if online == 0 {
@@ -432,6 +489,27 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 	} else {
 		a.mPeers.SetTitle(fmt.Sprintf("Peers (%d online)", online))
 		a.mPeers.Enable()
+	}
+}
+
+// osLabel returns a short human-readable OS label.
+func osLabel(os string) string {
+	switch os {
+	case "linux":
+		return "Linux"
+	case "windows":
+		return "Windows"
+	case "darwin":
+		return "macOS"
+	case "android":
+		return "Android"
+	case "ios":
+		return "iOS"
+	default:
+		if os == "" {
+			return "?"
+		}
+		return os
 	}
 }
 
@@ -526,6 +604,247 @@ func (a *App) rebuildExitNodeSubmenu(peers []*ipnstate.PeerStatus, activeID ipn.
 	a.mExitNodes.SetTitle(activeLabel)
 }
 
+// ── Subnet route advertising submenu ──────────────────────────────────────────
+
+// refreshRoutes reads current advertised routes from the daemon and rebuilds
+// the submenu. Call after any route change and on the regular poll cycle.
+func (a *App) refreshRoutes(ctx context.Context) {
+	current, err := a.rm.Current(ctx)
+	if err != nil {
+		log.Printf("systray: refresh routes: %v", err)
+		return
+	}
+	a.rebuildRouteSubmenu(current)
+}
+
+// rebuildRouteSubmenu replaces the advertised-routes submenu contents.
+//
+// Layout:
+//   Advertise subnets (N advertising)
+//     ✓ 192.168.1.0/24  RFC-1918 subnet  [approved ✓ / pending…]
+//         Remove
+//     ─────────────────
+//     Add route…
+//     Suggest from local interfaces…
+func (a *App) rebuildRouteSubmenu(current []routes.Route) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Hide old route items.
+	for _, ri := range a.routeItems {
+		ri.item.Hide()
+		if ri.removeIt != nil {
+			ri.removeIt.Hide()
+		}
+	}
+	a.routeItems = a.routeItems[:0]
+
+	for _, r := range current {
+		approval := "pending approval…"
+		if r.Approved {
+			approval = "approved ✓"
+		}
+		label := fmt.Sprintf("✓ %s  [%s]", r.Prefix.String(), approval)
+		tooltip := fmt.Sprintf("Label: %s | Status: %s", r.Label, approval)
+
+		item := a.mAdvertise.AddSubMenuItem(label, tooltip)
+		removeIt := item.AddSubMenuItem("    Remove", fmt.Sprintf("Stop advertising %s", r.Prefix))
+
+		ri := &routeItem{route: r, item: item, removeIt: removeIt}
+		a.routeItems = append(a.routeItems, ri)
+
+		// Click on route row → toggle (re-add as a visual hint; real toggle via Remove)
+		go func(pfx netip.Prefix, mi *systray.MenuItem) {
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case _, ok := <-mi.ClickedCh:
+					if !ok {
+						return
+					}
+					// Clicking the route row opens an info notification.
+					a.notifier.Send(
+						fmt.Sprintf("Advertising %s", pfx),
+						"Use 'Remove' to stop advertising this prefix.",
+					)
+				}
+			}
+		}(r.Prefix, item)
+
+		// Remove click
+		go func(pfx netip.Prefix, mi *systray.MenuItem) {
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case _, ok := <-mi.ClickedCh:
+					if !ok {
+						return
+					}
+					go a.doRemoveRoute(pfx)
+				}
+			}
+		}(r.Prefix, removeIt)
+	}
+
+	// Update parent label.
+	if len(current) == 0 {
+		a.mAdvertise.SetTitle("Advertise subnets")
+		a.mAdvertise.SetTooltip("Share local subnets with the tailnet (none active)")
+	} else {
+		a.mAdvertise.SetTitle(fmt.Sprintf("Advertise subnets (%d)", len(current)))
+		a.mAdvertise.SetTooltip(fmt.Sprintf("%d subnet(s) being advertised", len(current)))
+	}
+}
+
+// ── Route actions ─────────────────────────────────────────────────────────────
+
+func (a *App) doAddRoute() {
+	// Step 1: offer suggestions from local interfaces via zenity --list,
+	// with a "Manual entry…" option at the top.
+	suggestions, err := routes.Suggest()
+	if err != nil {
+		log.Printf("routes suggest: %v", err)
+	}
+
+	prefix, err := a.pickRoutePrefix(suggestions)
+	if err != nil {
+		if !errors.Is(err, picker.ErrCancelled) {
+			log.Printf("add route picker: %v", err)
+			a.notifier.Send("Add route", fmt.Sprintf("Error: %v", err))
+		}
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+	defer cancel()
+
+	if err := a.rm.Add(ctx, prefix); err != nil {
+		log.Printf("add route: %v", err)
+		a.notifier.Send("Add route", fmt.Sprintf("Failed: %v", err))
+		return
+	}
+
+	a.notifier.Send(
+		"Subnet advertised",
+		fmt.Sprintf("%s is now being advertised.\nApprove it in the admin console if required.", prefix),
+	)
+	log.Printf("routes: added %s", prefix)
+	go a.refreshPeers()
+}
+
+func (a *App) doRemoveRoute(prefix netip.Prefix) {
+	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+	defer cancel()
+
+	if err := a.rm.Remove(ctx, prefix); err != nil {
+		log.Printf("remove route: %v", err)
+		a.notifier.Send("Remove route", fmt.Sprintf("Failed: %v", err))
+		return
+	}
+
+	a.notifier.Send("Subnet removed", fmt.Sprintf("No longer advertising %s", prefix))
+	log.Printf("routes: removed %s", prefix)
+	go a.refreshPeers()
+}
+
+// pickRoutePrefix presents the user with a list of interface suggestions plus
+// a "Manual entry…" option. Returns the chosen prefix.
+func (a *App) pickRoutePrefix(suggestions []routes.Suggestion) (netip.Prefix, error) {
+	// Build a single-column list. Each row is "  192.168.1.0/24  (eth0)" so
+	// the user sees a friendly label. We parse the CIDR back out of the chosen
+	// row using the first word.
+	//
+	// We also keep a separate "Manual entry…" row at the top (empty prefix).
+	type option struct {
+		label  string
+		prefix string // empty = manual entry
+	}
+
+	opts := []option{{label: "  Enter manually…", prefix: ""}}
+	for _, s := range suggestions {
+		opts = append(opts, option{
+			label:  fmt.Sprintf("  %-22s  via %s", s.Prefix.String(), s.Interface),
+			prefix: s.Prefix.String(),
+		})
+	}
+
+	// zenity --list with one visible column; returns the chosen row text.
+	args := []string{
+		"--list",
+		"--title=Advertise subnet",
+		"--text=Select a local subnet to advertise:",
+		"--column=Subnet",
+		"--width=480",
+		"--height=300",
+	}
+	for _, o := range opts {
+		args = append(args, o.label)
+	}
+
+	out, err := runZenity(args...)
+	if err != nil {
+		if errors.Is(err, picker.ErrZenityNotFound) || errors.Is(err, picker.ErrCancelled) {
+			return netip.Prefix{}, err
+		}
+		// --list unavailable — fall through to manual entry.
+		out = ""
+	}
+
+	chosen := strings.TrimSpace(strings.TrimRight(out, "\n\r"))
+
+	// Empty or "Enter manually…" → open the text-entry dialog.
+	if chosen == "" || strings.Contains(chosen, "Enter manually") {
+		return a.pickRouteManual()
+	}
+
+	// Extract the CIDR from the first non-space word of the chosen row.
+	fields := strings.Fields(chosen)
+	if len(fields) == 0 {
+		return a.pickRouteManual()
+	}
+	cidr := fields[0]
+
+	pfx, err := routes.ParsePrefix(cidr)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("parse selected prefix %q: %w", cidr, err)
+	}
+	if err := routes.Validate(pfx.String()); err != nil {
+		return netip.Prefix{}, err
+	}
+	return pfx, nil
+}
+
+// pickRouteManual shows a zenity --entry dialog for freeform CIDR input.
+func (a *App) pickRouteManual() (netip.Prefix, error) {
+	out, err := runZenity(
+		"--entry",
+		"--title=Advertise subnet",
+		"--text=Enter a subnet to advertise (CIDR notation):\n\nExamples:\n  192.168.1.0/24\n  10.0.0.0/8\n  172.16.5.0/24",
+		"--entry-text=192.168.1.0/24",
+		"--width=400",
+	)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	cidr := strings.TrimSpace(strings.TrimRight(out, "\n\r"))
+	if cidr == "" {
+		return netip.Prefix{}, picker.ErrCancelled
+	}
+	if err := routes.Validate(cidr); err != nil {
+		// Show the validation error back to the user.
+		_, _ = runZenity(
+			"--error",
+			"--title=Invalid subnet",
+			"--text="+err.Error(),
+			"--width=360",
+		)
+		return netip.Prefix{}, picker.ErrCancelled
+	}
+	return routes.ParsePrefix(cidr)
+}
+
 // ── Taildrop ──────────────────────────────────────────────────────────────────
 
 func (a *App) runTaildrop() {
@@ -554,6 +873,9 @@ func (a *App) handleMenuEvents() {
 		select {
 		case <-a.ctx.Done():
 			return
+
+		case <-a.mAddRoute.ClickedCh:
+			go a.doAddRoute()
 
 		case <-a.mConnect.ClickedCh:
 			go a.doConnect()
@@ -664,44 +986,61 @@ func (a *App) doToggle(
 	}
 }
 
+// doSendFile is the "Send file…" top-level tray action.
+// It asks the user to pick a file first, then a peer.
 func (a *App) doSendFile() {
-	// Pick a file via zenity (a lightweight GTK dialog tool).
-	// Falls back to a logged message if zenity is not installed.
-	path, err := pickFileWithZenity()
+	// Step 1: file picker
+	paths, err := picker.PickFiles()
 	if err != nil {
-		log.Printf("file picker: %v", err)
-		a.notifier.Send("Taildrop", "Could not open file picker (is zenity installed?)")
+		a.handlePickerError("file", err)
 		return
 	}
-	if path == "" {
-		return // user cancelled
+	if len(paths) == 0 {
+		return // cancelled
 	}
 
-	// Ask which peer to send to.
-	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
-	defer cancel()
-	peers, err := a.ts.Peers(ctx)
-	if err != nil || len(peers) == 0 {
-		a.notifier.Send("Taildrop", "No peers available")
+	// Step 2: peer picker — build list of online peers
+	onlinePeers, err := a.onlinePeers()
+	if err != nil {
+		a.notifier.Send("Taildrop", fmt.Sprintf("Could not fetch peers: %v", err))
 		return
 	}
-
-	// For the scaffold: send to the first online peer.
-	// In a real app you'd show a peer-picker dialog here.
-	var target *ipnstate.PeerStatus
-	for _, p := range peers {
-		if p.Online {
-			target = p
-			break
-		}
-	}
-	if target == nil {
+	if len(onlinePeers) == 0 {
 		a.notifier.Send("Taildrop", "No peers are online")
 		return
 	}
 
-	log.Printf("taildrop: sending %s → %s", path, target.HostName)
-	a.notifier.Send("Taildrop", fmt.Sprintf("Sending to %s…", target.HostName))
+	target, err := picker.PickPeer(onlinePeers)
+	if err != nil {
+		a.handlePickerError("peer", err)
+		return
+	}
+
+	// Step 3: send all chosen files
+	for _, path := range paths {
+		go a.sendOneFile(path, target)
+	}
+}
+
+// doSendFileToPeer is triggered from a specific peer's "Send file…" sub-item.
+// The peer is already known so only a file picker is shown.
+func (a *App) doSendFileToPeer(target *ipnstate.PeerStatus) {
+	paths, err := picker.PickFiles()
+	if err != nil {
+		a.handlePickerError("file", err)
+		return
+	}
+	if len(paths) == 0 {
+		return // cancelled
+	}
+	for _, path := range paths {
+		go a.sendOneFile(path, target)
+	}
+}
+
+// sendOneFile sends a single file to target and shows a progress bar + notification.
+func (a *App) sendOneFile(path string, target *ipnstate.PeerStatus) {
+	log.Printf("taildrop: %s → %s", path, target.HostName)
 
 	ch, err := a.tdrop.SendFile(a.ctx, target.ID, path)
 	if err != nil {
@@ -709,14 +1048,80 @@ func (a *App) doSendFile() {
 		return
 	}
 
-	// Drain progress channel in background.
-	go func() {
-		for prog := range ch {
-			if prog.Done {
-				a.notifier.Send("Taildrop", fmt.Sprintf("Sent %s to %s", prog.Name, target.HostName))
-			} else if prog.Err != nil {
-				a.notifier.Send("Taildrop error", prog.Err.Error())
-			}
+	// Open a zenity progress bar (no-op if zenity unavailable).
+	var prog *picker.ProgressDialog
+	for p := range ch {
+		if prog == nil && p.Total > 0 {
+			prog = picker.NewProgressDialog(p.Name, p.Total)
 		}
-	}()
+		if prog != nil {
+			prog.Update(p.Sent)
+		}
+		if p.Done {
+			prog.Close()
+			a.notifier.Send(
+				"Taildrop — sent",
+				fmt.Sprintf("%s → %s", p.Name, target.HostName),
+			)
+			return
+		}
+		if p.Err != nil {
+			prog.Close()
+			a.notifier.SendUrgent("Taildrop error", p.Err.Error())
+			log.Printf("taildrop send error: %v", p.Err)
+			return
+		}
+	}
+}
+
+// SendFileToPeerID is called by the status window when the user clicks
+// "Send file" next to a specific peer. It resolves the StableNodeID to a
+// PeerStatus and opens the file picker.
+func (a *App) SendFileToPeerID(targetID string) {
+	online, err := a.onlinePeers()
+	if err != nil {
+		log.Printf("SendFileToPeerID: %v", err)
+		return
+	}
+	for _, p := range online {
+		if string(p.ID) == targetID {
+			a.doSendFileToPeer(p)
+			return
+		}
+	}
+	a.notifier.Send("Taildrop", "Peer not found or offline")
+}
+
+// onlinePeers returns peers that are currently online, sorted by hostname.
+func (a *App) onlinePeers() ([]*ipnstate.PeerStatus, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	peers, err := a.ts.Peers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var online []*ipnstate.PeerStatus
+	for _, p := range peers {
+		if p.Online {
+			online = append(online, p)
+		}
+	}
+	return online, nil
+}
+
+// handlePickerError maps picker errors to user-visible messages.
+func (a *App) handlePickerError(stage string, err error) {
+	switch {
+	case errors.Is(err, picker.ErrCancelled):
+		// User cancelled — silent.
+	case errors.Is(err, picker.ErrZenityNotFound):
+		a.notifier.SendUrgent(
+			"Taildrop: zenity required",
+			"Install zenity to use the file sender:\n  sudo apt install zenity",
+		)
+		log.Printf("taildrop %s picker: %v", stage, err)
+	default:
+		a.notifier.Send("Taildrop", fmt.Sprintf("%s picker: %v", stage, err))
+		log.Printf("taildrop %s picker: %v", stage, err)
+	}
 }

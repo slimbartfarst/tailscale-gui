@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/yourname/tailscale-gui/internal/picker"
 )
 
 // Icons are embedded at build time from assets/icons/.
@@ -89,21 +91,9 @@ func copyToClipboard(text string) error {
 	return exec.ErrNotFound
 }
 
-// pickFileWithZenity opens a GTK file-chooser dialog and returns the chosen path.
-// Returns ("", nil) if the user cancels, or an error if zenity is unavailable.
-func pickFileWithZenity() (string, error) {
-	out, err := exec.Command(
-		"zenity",
-		"--file-selection",
-		"--title=Select file to send via Taildrop",
-	).Output()
-	if err != nil {
-		// Exit code 1 means user pressed Cancel — not a real error.
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return "", nil
-		}
-		return "", err
-	}
-	path := strings.TrimRight(string(out), "\n\r")
-	return path, nil
+// runZenity is a package-level shim that delegates to picker.RunZenity so
+// all zenity calls in the systray package share the same error-normalisation
+// logic (ErrCancelled, ErrZenityNotFound).
+func runZenity(args ...string) (string, error) {
+	return picker.RunZenity(args...)
 }
