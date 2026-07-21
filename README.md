@@ -1,2 +1,198 @@
 # tailscale-gui
-Tailscale Gui for Linux
+
+A Linux system tray GUI for Tailscale, written entirely in Go.
+
+**Built on:**
+- [`tailscale.com/client/local`](https://pkg.go.dev/tailscale.com/client/local) — official Go client for the `tailscaled` daemon
+- [`github.com/tailscale/systray`](https://github.com/tailscale/systray) — Tailscale's own cross-platform systray library (D-Bus / AppIndicator on Linux)
+
+No networking code written here. The daemon does all the hard work.
+
+---
+
+## Features
+
+| Feature | Status |
+|---|---|
+| Connect / Disconnect | ✅ |
+| Live connection status in tray | ✅ |
+| Per-peer list with online indicator | ✅ |
+| Click peer IP to copy to clipboard | ✅ |
+| Exit node selection submenu | ✅ |
+| MagicDNS / Accept routes / Shields up toggles | ✅ |
+| Desktop notifications on state change | ✅ |
+| Taildrop file receive (auto-save to ~/Downloads/Taildrop) | ✅ |
+| Taildrop file send (via zenity file picker) | ✅ |
+| Status window (full dashboard in browser) | ✅ |
+| Per-peer ping from status window | ✅ |
+| Autostart via XDG desktop entry | ✅ |
+
+---
+
+## Prerequisites
+
+| Requirement | Install |
+|---|---|
+| Go 1.23+ | https://go.dev/dl/ |
+| `tailscaled` running | `sudo tailscaled &` or systemd |
+| Operator permission | `sudo tailscale set --operator=$USER` |
+| D-Bus + StatusNotifierItem | GNOME, KDE, COSMIC, waybar, hyprpanel |
+| GNOME only | `gnome-shell-extension-appindicator` |
+| Notifications (optional) | `sudo apt install libnotify-bin` |
+| File send (optional) | `sudo apt install zenity` |
+| Clipboard (optional) | `sudo apt install xclip` or `wl-clipboard` |
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/yourname/tailscale-gui
+cd tailscale-gui
+
+# Downloads deps, generates placeholder icons, compiles
+make
+
+# Run (verbose)
+make run
+```
+
+---
+
+## Project layout
+
+```
+tailscale-gui/
+├── cmd/tailscale-gui/main.go       Entry point
+├── internal/
+│   ├── client/client.go            Wraps tailscale.com/client/local
+│   ├── systray/
+│   │   ├── systray.go              Tray icon, menus, event loop
+│   │   └── icons.go                Embedded PNGs + OS helpers
+│   ├── config/config.go            ~/.config/tailscale-gui/config.json
+│   ├── notify/notify.go            Desktop notifications (notify-send)
+│   ├── taildrop/taildrop.go        File send / receive
+│   └── window/
+│       ├── window.go               Localhost HTTP status server
+│       └── html.go                 Self-contained dashboard HTML/JS
+├── assets/icons/                   32×32 PNG tray icons
+├── scripts/generate_icons.py       Generates placeholder icons
+├── packaging/tailscale-gui.desktop XDG autostart entry
+└── Makefile
+```
+
+---
+
+## Architecture
+
+```
+  ┌────────────────────────────────────────────────────────┐
+  │                 tailscale-gui process                  │
+  │                                                        │
+  │  main.go                                               │
+  │   ├─ client.Client ──────────────────────────────────► tailscaled
+  │   │    tailscale.com/client/local                      (Unix socket)
+  │   │    Status/Connect/Disconnect/Prefs/WatchState      /var/run/tailscale/
+  │   │    SetExitNode/SetAcceptDNS/PushFile/Ping          tailscaled.sock
+  │   │                                                    │
+  │   ├─ config.Config                                     │
+  │   │    ~/.config/tailscale-gui/config.json             │
+  │   │                                                    │
+  │   ├─ notify.Notifier                                   │
+  │   │    notify-send (best-effort)                       │
+  │   │                                                    │
+  │   ├─ taildrop.Manager                                  │
+  │   │    Watch() polls WaitingFiles every 5 s            │
+  │   │    SendFile() streams via PushFile                 │
+  │   │                                                    │
+  │   ├─ window.Manager                                    │
+  │   │    HTTP on 127.0.0.1:random                        │
+  │   │    /api/status  /api/connect  /api/ping …          │
+  │   │    Dashboard HTML auto-refreshes every 5 s         │
+  │   │                                                    │
+  │   └─ systray.App  ◄── main thread (required) ────────► D-Bus / AppIndicator
+  │        IPN bus → icon/menu updates                     desktop shell
+  │        Menu clicks → client calls                      │
+  └────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Configuration
+
+`~/.config/tailscale-gui/config.json` (created on first run):
+
+```json
+{
+  "admin_console_url": "https://login.tailscale.com/admin/machines",
+  "notifications_enabled": true,
+  "taildrop_dir": "~/Downloads/Taildrop",
+  "start_minimised": true,
+  "poll_interval_sec": 30,
+  "status_window_port": 0
+}
+```
+
+Set `admin_console_url` to your Headscale URL if self-hosting.
+Set `status_window_port` to a fixed port if you want a stable bookmark.
+
+---
+
+## Status window
+
+Click **"Open status window…"** in the tray menu. A dashboard opens in your
+browser at `http://127.0.0.1:<port>/` and auto-refreshes every 5 seconds.
+
+From the dashboard you can:
+- Connect / Disconnect
+- See all peers with online/offline status
+- Click any peer IP to copy it
+- Ping any online peer (shows latency + endpoint)
+- Change exit node
+- Toggle MagicDNS, subnet routes, shields up
+
+---
+
+## Autostart
+
+```bash
+make install
+```
+
+Installs the binary to `~/.local/bin/` and registers an XDG autostart entry.
+
+---
+
+## Replacing the icons
+
+Drop 32×32 PNG files into `assets/icons/`:
+
+```
+assets/icons/connected.png
+assets/icons/disconnected.png
+assets/icons/connecting.png
+assets/icons/warning.png
+```
+
+Then `make build`. The icons are embedded into the binary via `go:embed`.
+
+---
+
+## What to build next
+
+- **Peer-picker dialog for Taildrop send** — replace the "first online peer"
+  stub in `systray.go:doSendFile()` with a `zenity --list` dialog.
+- **Subnet route advertising** — `tailscale.com/client/local` exposes
+  `AdvertiseRoutes`; add a submenu to toggle advertised prefixes.
+- **SSH peer launch** — add an "SSH…" button per-peer that runs
+  `xterm -e ssh <hostname>`.
+- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and
+  open the auth URL from `st.AuthURL`.
+- **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
+  can be distributed via Flathub.
+
+---
+
+## Licence
+
+MIT. Not affiliated with or endorsed by Tailscale Inc.
