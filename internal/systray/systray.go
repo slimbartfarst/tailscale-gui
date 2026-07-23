@@ -851,18 +851,34 @@ func (a *App) runTaildrop() {
 	a.tdrop.Watch(a.ctx, func(ev taildrop.FileEvent) {
 		if ev.Err != nil {
 			log.Printf("taildrop receive error: %v", ev.Err)
-			a.notifier.Send("Taildrop error", ev.Err.Error())
+			// Error notification — no action buttons needed.
+			a.notifier.SendWithActions(
+				a.ctx,
+				notify.FileReceiveErrorNotification(ev.Name, ev.Err),
+				func(_ string) {},
+			)
 			return
 		}
+
 		from := ev.From
 		if from == "" {
 			from = "a peer"
 		}
-		a.notifier.Send(
-			"File received via Taildrop",
-			fmt.Sprintf("%s from %s\nSaved to %s", ev.Name, from, ev.Path),
-		)
-		log.Printf("taildrop: received %s → %s", ev.Name, ev.Path)
+		log.Printf("taildrop: received %s from %q → %s", ev.Name, from, ev.Path)
+
+		// Send an action notification with "Open file" and "Show in folder".
+		notif := notify.FileReceivedNotification(ev.Name, from, ev.Path)
+		savedPath := ev.Path // capture for closure
+		savedDir := a.tdrop.ReceiveDir()
+
+		a.notifier.SendWithActions(a.ctx, notif, func(action string) {
+			switch action {
+			case "open-file":
+				openPath(savedPath)
+			case "open-folder":
+				openFileManager(savedDir)
+			}
+		})
 	})
 }
 

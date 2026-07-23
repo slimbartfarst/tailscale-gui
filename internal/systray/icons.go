@@ -58,6 +58,14 @@ func openFileManager(dir string) {
 	}
 }
 
+// openPath opens a file with the desktop's default application.
+func openPath(path string) {
+	cmd, args := fileManagerCmd(path) // xdg-open / open works for files too
+	if err := exec.Command(cmd, args...).Start(); err != nil {
+		log.Printf("openPath: %v", err)
+	}
+}
+
 func fileManagerCmd(dir string) (string, []string) {
 	switch runtime.GOOS {
 	case "linux":

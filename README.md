@@ -22,6 +22,11 @@ No networking code written here. The daemon does all the hard work.
 | MagicDNS / Accept routes / Shields up toggles | ✅ |
 | Desktop notifications on state change | ✅ |
 | Taildrop file receive (auto-save to ~/Downloads/Taildrop) | ✅ |
+| Taildrop receive — immediate via IPN bus (FilesWaiting signal) | ✅ |
+| Taildrop receive — duplicate filename handling (file (1).txt etc.) | ✅ |
+| Taildrop receive — sender hostname resolved from peer map | ✅ |
+| Taildrop receive — action notification: "Open file" / "Show in folder" | ✅ |
+| Taildrop receive — D-Bus action buttons via gdbus (with notify-send fallback) | ✅ |
 | Taildrop send — multi-file picker (zenity) | ✅ |
 | Taildrop send — peer picker (list dialog + text fallback + fuzzy match) | ✅ |
 | Taildrop send — per-peer "Send file…" in tray submenu | ✅ |
@@ -45,8 +50,6 @@ No networking code written here. The daemon does all the hard work.
   via `$TERMINAL`).
 - **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
   the auth URL from `st.AuthURL` automatically in the browser.
-- **Taildrop receive — "Open file" notification action** — use `gdbus` or
-  `go-notify` to attach an action button to the received-file notification.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
   distribution with sandboxed access to the Tailscale socket.
 
@@ -209,18 +212,13 @@ Then `make build`. The icons are embedded into the binary via `go:embed`.
 
 ## What to build next
 
-- **Subnet route advertising** — `tailscale.com/client/local` exposes
-  `AdvertiseRoutes`; add a submenu to toggle which local subnets this device
-  advertises to the tailnet.
 - **SSH peer launch** — add an "SSH…" button per-peer in the status window
   that runs `xterm -e ssh <hostname>` (or the user's preferred terminal).
 - **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
   the auth URL from `st.AuthURL` automatically in the browser.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
   can be distributed via Flathub with sandboxed access to the Tailscale socket.
-- **Taildrop receive notifications with "Open file" action** — use
-  `gdbus` or `go-notify` to attach an action button to the notification
-  that opens the saved file directly.
+
 
 ---
 

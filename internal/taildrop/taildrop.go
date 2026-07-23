@@ -2,9 +2,15 @@
 //
 // Taildrop file send/receive via the tailscaled local API.
 //
-// Receiving: watches the IPN bus for incoming file notifications and saves
-//            them to a configurable directory.
-// Sending:   wraps local.Client.PushFile for outbound transfers.
+// Receiving:
+//   Two complementary mechanisms run in parallel:
+//   1. IPN bus watcher  — reacts immediately when tailscaled signals that
+//      files are waiting (ipn.Notify.FilesWaiting == true).  Zero latency.
+//   2. Polling fallback — drains any files that arrived while the watcher
+//      was restarting (5-second interval).
+//
+// Sending:
+//   Wraps local.Client.PushFile with a progress channel.
 package taildrop
 
 import (
@@ -21,6 +27,8 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
+
 	"github.com/yourname/tailscale-gui/internal/client"
 )
 
@@ -29,7 +37,7 @@ const defaultReceiveDir = "~/Downloads/Taildrop"
 // Manager handles Taildrop send and receive.
 type Manager struct {
 	ts         *client.Client
-	receiveDir string // expanded path
+	receiveDir string // fully expanded path
 }
 
 // New creates a Manager. receiveDir may be "" to use the default.
@@ -37,10 +45,8 @@ func New(ts *client.Client, receiveDir string) *Manager {
 	if receiveDir == "" {
 		receiveDir = defaultReceiveDir
 	}
-	// Expand leading ~
 	if strings.HasPrefix(receiveDir, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
+		if home, err := os.UserHomeDir(); err == nil {
 			receiveDir = filepath.Join(home, receiveDir[2:])
 		}
 	}
@@ -52,70 +58,150 @@ func (m *Manager) ReceiveDir() string { return m.receiveDir }
 
 // ── Receiving ─────────────────────────────────────────────────────────────────
 
-// FileEvent is emitted for each file received.
+// FileEvent is emitted for each file received or each receive error.
 type FileEvent struct {
-	Name string // filename
-	Path string // full path on disk
+	Name string // sanitised filename
+	Path string // full path on disk (empty on error)
 	Size int64
-	From string // sender hostname
+	From string // sender hostname (may be empty if unknown)
 	Err  error
 }
 
-// Watch listens on the IPN bus for incoming Taildrop files and saves them to
-// ReceiveDir. It calls onFile for each received file. Blocks until ctx done.
+// Watch starts the receive loop and calls onFile for every received file.
+// Blocks until ctx is cancelled. Call from a goroutine.
 func (m *Manager) Watch(ctx context.Context, onFile func(FileEvent)) {
 	if err := os.MkdirAll(m.receiveDir, 0o755); err != nil {
 		log.Printf("taildrop: cannot create receive dir %s: %v", m.receiveDir, err)
 		return
 	}
 
-	// Poll for waiting files every 5 s as a fallback, and also react to
-	// IPN notifications. The local API exposes WaitingFiles() to list files
-	// that have been received but not yet claimed.
+	// trigger is closed/replaced each time we want an immediate drain.
+	trigger := make(chan struct{}, 1)
+	nudge := func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
+		}
+	}
+
+	// IPN bus watcher — fires trigger whenever FilesWaiting becomes true.
+	go m.watchIPNBus(ctx, nudge)
+
+	// Drain loop — responds to both triggers and the 5-second fallback ticker.
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	// Also watch the IPN bus for file-notify events.
-	go m.watchBus(ctx, ticker)
+	// Build a peer map for resolving sender hostnames.
+	peers := m.buildPeerMap(ctx)
+	peerRefresh := time.NewTicker(60 * time.Second)
+	defer peerRefresh.Stop()
+
+	// Drain immediately on start in case files arrived before we launched.
+	nudge()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-peerRefresh.C:
+			peers = m.buildPeerMap(ctx)
 		case <-ticker.C:
-			m.drainWaitingFiles(ctx, onFile)
+			m.drainWaitingFiles(ctx, peers, onFile)
+		case <-trigger:
+			m.drainWaitingFiles(ctx, peers, onFile)
 		}
 	}
 }
 
-// watchBus listens for ipn.Notify.FilesWaiting and resets the ticker.
-// (The ticker channel is used as a signal — we just poke it via a separate
-// goroutine that sends to a shared channel in a real implementation.
-// For this scaffold we simply call drainWaitingFiles on a short interval.)
-func (m *Manager) watchBus(ctx context.Context, _ *time.Ticker) {
-	err := m.ts.WatchState(ctx, func(sc client.StateChange) {
-		// FilesWaiting is signalled through the IPN bus; in a full
-		// implementation you'd check n.FilesWaiting here via WatchIPNBus
-		// directly. The polling loop above covers the common case.
-		_ = sc
-	})
-	if err != nil && ctx.Err() == nil {
-		log.Printf("taildrop: bus watch error: %v", err)
+// watchIPNBus subscribes to the IPN notification bus and nudges the drain loop
+// whenever FilesWaiting is signalled. Automatically reconnects on errors.
+func (m *Manager) watchIPNBus(ctx context.Context, nudge func()) {
+	for {
+		if err := m.watchIPNBusOnce(ctx, nudge); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("taildrop: IPN bus error (%v), reconnecting in 3s", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
 	}
 }
 
-// drainWaitingFiles fetches and saves all files that tailscaled has received
-// but not yet handed to us.
-func (m *Manager) drainWaitingFiles(ctx context.Context, onFile func(FileEvent)) {
-	lc := m.ts.LocalClient()
+func (m *Manager) watchIPNBusOnce(ctx context.Context, nudge func()) error {
+	watcher, err := m.ts.LocalClient().WatchIPNBus(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
 
+	for {
+		n, err := watcher.Next()
+		if err != nil {
+			return err
+		}
+		if n.FilesWaiting != nil {
+			log.Printf("taildrop: FilesWaiting signal received")
+			nudge()
+		}
+	}
+}
+
+// buildPeerMap returns a map from Tailscale IP string → hostname for all
+// currently known peers. Used to resolve who sent a file.
+func (m *Manager) buildPeerMap(ctx context.Context) map[string]string {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	st, err := m.ts.Status(ctx)
+	if err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(st.Peer))
+	for _, p := range st.Peer {
+		for _, ip := range p.TailscaleIPs {
+			out[ip.String()] = hostLabel(p)
+		}
+	}
+	return out
+}
+
+// hostLabel returns the most human-readable name for a peer.
+func hostLabel(p *ipnstate.PeerStatus) string {
+	if p.DNSName != "" {
+		// Strip trailing dot and domain suffix — keep just the hostname part.
+		parts := strings.SplitN(strings.TrimSuffix(p.DNSName, "."), ".", 2)
+		return parts[0]
+	}
+	return p.HostName
+}
+
+// drainWaitingFiles fetches every file waiting in the daemon queue and saves
+// them all, calling onFile for each.
+func (m *Manager) drainWaitingFiles(
+	ctx context.Context,
+	peers map[string]string,
+	onFile func(FileEvent),
+) {
+	lc := m.ts.LocalClient()
 	files, err := lc.WaitingFiles(ctx)
 	if err != nil {
-		// Not connected yet — silent.
+		// Silent — daemon may not be ready yet.
 		return
 	}
 	for _, wf := range files {
-		ev := m.saveFile(ctx, lc, wf.Name)
+		// Try to resolve sender IP → hostname.
+		from := ""
+		if wf.Sender != "" {
+			if name, ok := peers[wf.Sender]; ok {
+				from = name
+			} else {
+				from = wf.Sender // fall back to raw IP
+			}
+		}
+		ev := m.saveFile(ctx, lc, wf.Name, from)
 		if onFile != nil {
 			onFile(ev)
 		}
@@ -123,46 +209,75 @@ func (m *Manager) drainWaitingFiles(ctx context.Context, onFile func(FileEvent))
 }
 
 // saveFile claims a single waiting file from tailscaled and writes it to disk.
-func (m *Manager) saveFile(ctx context.Context, lc *local.Client, name string) FileEvent {
-	// Sanitise the filename so it can't escape the receive dir.
+func (m *Manager) saveFile(
+	ctx context.Context,
+	lc *local.Client,
+	name string,
+	from string,
+) FileEvent {
+	// Sanitise filename — prevent path traversal.
 	safeName := filepath.Base(filepath.Clean(name))
-	if safeName == "." || safeName == ".." {
-		return FileEvent{Name: name, Err: fmt.Errorf("invalid filename")}
+	if safeName == "." || safeName == ".." || safeName == "" {
+		return FileEvent{Name: name, From: from, Err: fmt.Errorf("invalid filename")}
 	}
 
-	dest := filepath.Join(m.receiveDir, safeName)
+	// If a file with that name already exists, append a counter.
+	dest := m.uniqueDest(safeName)
 
 	rc, size, err := lc.GetWaitingFile(ctx, name)
 	if err != nil {
-		return FileEvent{Name: name, Err: fmt.Errorf("get: %w", err)}
+		return FileEvent{Name: safeName, From: from, Err: fmt.Errorf("get: %w", err)}
 	}
 	defer rc.Close()
 
 	f, err := os.Create(dest)
 	if err != nil {
-		return FileEvent{Name: name, Err: fmt.Errorf("create: %w", err)}
+		return FileEvent{Name: safeName, From: from, Err: fmt.Errorf("create: %w", err)}
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, rc); err != nil {
-		return FileEvent{Name: name, Err: fmt.Errorf("write: %w", err)}
+	written, err := io.Copy(f, rc)
+	if err != nil {
+		os.Remove(dest) // clean up partial file
+		return FileEvent{Name: safeName, From: from, Err: fmt.Errorf("write: %w", err)}
 	}
 
-	// Delete the file from the daemon's waiting queue.
+	// Remove from daemon queue only after successful write.
 	if err := lc.DeleteWaitingFile(ctx, name); err != nil {
 		log.Printf("taildrop: delete waiting file %q: %v", name, err)
 	}
 
-	log.Printf("taildrop: saved %s (%d bytes) → %s", name, size, dest)
-	return FileEvent{Name: safeName, Path: dest, Size: size}
+	log.Printf("taildrop: received %s (%d bytes) from %q → %s", safeName, written, from, dest)
+	return FileEvent{Name: filepath.Base(dest), Path: dest, Size: size, From: from}
+}
+
+// uniqueDest returns a path that doesn't already exist.
+// If ~/Downloads/Taildrop/file.txt exists it returns ~/Downloads/Taildrop/file (1).txt, etc.
+func (m *Manager) uniqueDest(name string) string {
+	candidate := filepath.Join(m.receiveDir, name)
+	if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		return candidate
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for i := 1; i < 1000; i++ {
+		candidate = filepath.Join(m.receiveDir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+	return filepath.Join(m.receiveDir, name) // give up, let os.Create overwrite
 }
 
 // ── Sending ───────────────────────────────────────────────────────────────────
 
 // SendFile sends a file to a peer identified by its StableNodeID.
-// Progress is reported via the returned channel (bytes sent so far).
-// The channel is closed when the transfer completes or fails.
-func (m *Manager) SendFile(ctx context.Context, targetID ipn.StableNodeID, filePath string) (<-chan SendProgress, error) {
+// Progress is reported via the returned channel; closed when done or failed.
+func (m *Manager) SendFile(
+	ctx context.Context,
+	targetID ipn.StableNodeID,
+	filePath string,
+) (<-chan SendProgress, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -173,11 +288,10 @@ func (m *Manager) SendFile(ctx context.Context, targetID ipn.StableNodeID, fileP
 		return nil, fmt.Errorf("stat: %w", err)
 	}
 
-	// Detect content type.
 	ext := filepath.Ext(filePath)
 	contentType := mime.TypeByExtension(ext)
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		contentType = ContentTypeForFile(filePath)
 	}
 
 	progress := make(chan SendProgress, 16)
@@ -189,8 +303,7 @@ func (m *Manager) SendFile(ctx context.Context, targetID ipn.StableNodeID, fileP
 		defer close(progress)
 
 		pr := &progressReader{r: f, total: total, ch: progress, name: name}
-		err := m.ts.LocalClient().PushFile(ctx, targetID, total,
-			name, contentType, pr)
+		err := m.ts.LocalClient().PushFile(ctx, targetID, total, name, contentType, pr)
 		if err != nil {
 			progress <- SendProgress{Name: name, Total: total, Err: err}
 		} else {
@@ -233,11 +346,9 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 // ContentTypeForFile guesses the MIME type for a file path.
 func ContentTypeForFile(path string) string {
 	ext := filepath.Ext(path)
-	ct := mime.TypeByExtension(ext)
-	if ct != "" {
+	if ct := mime.TypeByExtension(ext); ct != "" {
 		return ct
 	}
-	// Read first 512 bytes to sniff.
 	f, err := os.Open(path)
 	if err != nil {
 		return "application/octet-stream"
