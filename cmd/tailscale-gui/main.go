@@ -74,6 +74,9 @@ func main() {
 	// Wire the browser "Send file" button back into the systray send flow.
 	win.SendFileFn = app.SendFileToPeerID
 
+	// Wire the browser "SSH" button to launch a terminal on this machine.
+	win.SSHFn = app.SSHByPeerID
+
 	// Wire subnet route callbacks so the browser dashboard can read/write routes.
 	rm := routes.New(tsClient)
 	win.RoutesFn = func(c context.Context) ([]window.RouteEntry, error) {

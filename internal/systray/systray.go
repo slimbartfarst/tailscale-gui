@@ -12,6 +12,7 @@
 //   Peers (N online) ▶
 //     hostname  100.x.x.x  [OS]
 //       Send file…
+//       SSH…               (only for SSH-capable peers)
 //   Exit nodes ▶
 //     ✓ None
 //       peer-name  100.x.x.x
@@ -50,6 +51,7 @@ import (
 	"github.com/yourname/tailscale-gui/internal/notify"
 	"github.com/yourname/tailscale-gui/internal/picker"
 	"github.com/yourname/tailscale-gui/internal/routes"
+	sshlaunch "github.com/yourname/tailscale-gui/internal/ssh"
 	"github.com/yourname/tailscale-gui/internal/taildrop"
 	"github.com/yourname/tailscale-gui/internal/window"
 	"tailscale.com/ipn"
@@ -98,6 +100,7 @@ type peerItem struct {
 	peer     *ipnstate.PeerStatus
 	item     *systray.MenuItem
 	sendItem *systray.MenuItem // "Send file…" sub-item
+	sshItem  *systray.MenuItem // "SSH…"       sub-item (nil if peer doesn't support SSH)
 }
 
 type exitNodeItem struct {
@@ -422,6 +425,9 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 		if pi.sendItem != nil {
 			pi.sendItem.Hide()
 		}
+		if pi.sshItem != nil {
+			pi.sshItem.Hide()
+		}
 	}
 	a.peerItems = a.peerItems[:0]
 
@@ -445,7 +451,14 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 		// "  Send file…" — nested under the peer row
 		sendItem := item.AddSubMenuItem("  Send file…", fmt.Sprintf("Send a file to %s via Taildrop", p.HostName))
 
-		pi := &peerItem{peer: p, item: item, sendItem: sendItem}
+		// "  SSH…" — shown only for SSH-capable peers
+		var sshItem *systray.MenuItem
+		if sshlaunch.PeerSupportsSSH(p) {
+			sshCmd := sshlaunch.SSHCommandString(p, a.sshConfig())
+			sshItem = item.AddSubMenuItem("  SSH…", fmt.Sprintf("Open terminal: %s", sshCmd))
+		}
+
+		pi := &peerItem{peer: p, item: item, sendItem: sendItem, sshItem: sshItem}
 		a.peerItems = append(a.peerItems, pi)
 
 		// Copy-IP click handler
@@ -481,6 +494,23 @@ func (a *App) rebuildPeerSubmenu(peers []*ipnstate.PeerStatus) {
 				}
 			}
 		}(p, sendItem)
+
+		// SSH click handler
+		if sshItem != nil {
+			go func(target *ipnstate.PeerStatus, mi *systray.MenuItem) {
+				for {
+					select {
+					case <-a.ctx.Done():
+						return
+					case _, ok := <-mi.ClickedCh:
+						if !ok {
+							return
+						}
+						go a.doSSH(target)
+					}
+				}
+			}(p, sshItem)
+		}
 	}
 
 	if online == 0 {
@@ -1090,6 +1120,26 @@ func (a *App) sendOneFile(path string, target *ipnstate.PeerStatus) {
 	}
 }
 
+// SSHByPeerID is called by the status window when the user clicks "SSH"
+// next to a specific peer. It resolves the StableNodeID to a PeerStatus
+// and launches a terminal.
+func (a *App) SSHByPeerID(targetID string) {
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	peers, err := a.ts.Peers(ctx)
+	if err != nil {
+		log.Printf("SSHByPeerID: fetch peers: %v", err)
+		return
+	}
+	for _, p := range peers {
+		if string(p.ID) == targetID {
+			a.doSSH(p)
+			return
+		}
+	}
+	a.notifier.Send("SSH", "Peer not found or offline")
+}
+
 // SendFileToPeerID is called by the status window when the user clicks
 // "Send file" next to a specific peer. It resolves the StableNodeID to a
 // PeerStatus and opens the file picker.
@@ -1106,6 +1156,28 @@ func (a *App) SendFileToPeerID(targetID string) {
 		}
 	}
 	a.notifier.Send("Taildrop", "Peer not found or offline")
+}
+
+// sshConfig builds an sshlaunch.Config from user preferences.
+func (a *App) sshConfig() sshlaunch.Config {
+	return sshlaunch.Config{
+		TerminalCmd: a.cfg.TerminalCmd,
+		SSHUser:     a.cfg.SSHUser,
+	}
+}
+
+// doSSH launches a terminal with ssh connected to the given peer.
+func (a *App) doSSH(p *ipnstate.PeerStatus) {
+	cfg := a.sshConfig()
+	if err := sshlaunch.Launch(p, cfg); err != nil {
+		log.Printf("ssh launch: %v", err)
+		a.notifier.SendUrgent(
+			"SSH failed",
+			fmt.Sprintf("Could not open terminal for %s:\n%v", p.HostName, err),
+		)
+		return
+	}
+	log.Printf("ssh: launched → %s (%s)", p.HostName, sshlaunch.Target(p))
 }
 
 // onlinePeers returns peers that are currently online, sorted by hostname.

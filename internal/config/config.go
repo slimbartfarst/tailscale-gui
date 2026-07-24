@@ -41,6 +41,15 @@ type Config struct {
 	// StatusWindowPort is the localhost port for the HTML status window.
 	// 0 means pick a random free port.
 	StatusWindowPort int `json:"status_window_port"`
+
+	// TerminalCmd overrides the auto-detected terminal emulator.
+	// Include the exec flag, e.g. "alacritty -e" or "xterm -e".
+	// Empty = auto-detect from $TERMINAL, desktop environment, then fallback list.
+	TerminalCmd string `json:"terminal_cmd,omitempty"`
+
+	// SSHUser is the username for SSH connections.
+	// Empty = let ssh decide (uses ~/.ssh/config or $USER).
+	SSHUser string `json:"ssh_user,omitempty"`
 }
 
 // Default returns a Config with sensible out-of-box values.

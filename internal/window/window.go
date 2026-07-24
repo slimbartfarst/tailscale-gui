@@ -44,6 +44,9 @@ type Manager struct {
 	ctx        context.Context
 	// SendFileFn is called when the browser clicks "Send file" on a peer.
 	SendFileFn func(targetID string)
+	// SSHFn is called when the browser clicks "SSH" on a peer.
+	// It launches a terminal on the host machine.
+	SSHFn func(targetID string)
 	// RoutesFn returns current advertised routes as [{prefix, approved, label}].
 	// Set by the caller after construction.
 	RoutesFn func(ctx context.Context) ([]RouteEntry, error)
@@ -104,6 +107,7 @@ func (m *Manager) start() (string, error) {
 	mux.HandleFunc("/api/set-pref", m.handleSetPref)
 	mux.HandleFunc("/api/ping", m.handlePing)
 	mux.HandleFunc("/api/send-file", m.handleSendFile)
+	mux.HandleFunc("/api/ssh", m.handleSSH)
 	mux.HandleFunc("/api/routes", m.handleRoutes)
 	mux.HandleFunc("/api/routes/add", m.handleAddRoute)
 	mux.HandleFunc("/api/routes/remove", m.handleRemoveRoute)
@@ -278,6 +282,24 @@ func (m *Manager) handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// handleSSH triggers an SSH terminal launch for a specific peer.
+// The terminal opens on the host machine; the browser gets an immediate 202.
+func (m *Manager) handleSSH(w http.ResponseWriter, r *http.Request) {
+	targetID := r.URL.Query().Get("id")
+	if targetID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if m.SSHFn == nil {
+		http.Error(w, "ssh not configured", http.StatusNotImplemented)
+		return
+	}
+	go m.SSHFn(targetID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "launching"})
 }
 
 // handleSendFile triggers the file picker → send flow for a specific peer.

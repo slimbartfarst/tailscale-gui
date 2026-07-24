@@ -398,6 +398,10 @@ function render(d) {
     const pingBtn = p.Online && ip
       ? `<button onclick="pingPeer('${esc(ip)}')">Ping</button>`
       : '';
+    const sshBtn = p.Online && p.ID && peerSupportsSSH(p)
+      ? `<button title="SSH to ${esc(p.HostName)}"
+               onclick="launchSSH('${esc(p.ID)}', '${esc(p.HostName)}')">SSH…</button>`
+      : '';
     row.innerHTML = ` + "`" + `
       <span class="dot ${p.Online ? 'online' : 'offline'}"></span>
       <span class="peer-name">${esc(p.HostName)}</span>
@@ -405,7 +409,7 @@ function render(d) {
       <span class="peer-ip" title="Click to copy" style="cursor:pointer"
             onclick="copyIP('${esc(ip)}')">${esc(ip)}</span>
       <span class="ping-result" id="ping-${safeId(ip)}"></span>
-      ${pingBtn}${sendBtn}
+      ${pingBtn}${sshBtn}${sendBtn}
     ` + "`" + `;
     list.appendChild(row);
   });
@@ -451,6 +455,38 @@ async function pingPeer(ip) {
     }
   } catch(e) {
     if (el) { el.textContent = '✗ failed'; el.style.color = 'var(--red)'; }
+  }
+}
+
+// peerSupportsSSH mirrors the Go logic in internal/ssh/ssh.go:PeerSupportsSSH.
+function peerSupportsSSH(p) {
+  if (!p.Online) return false;
+  if (p.TailscaleSSHEnabled) return true;
+  const linuxLike = ['linux', 'darwin', 'freebsd', 'openbsd', 'netbsd'];
+  return linuxLike.includes((p.OS || '').toLowerCase()) &&
+         p.TailscaleIPs && p.TailscaleIPs.length > 0;
+}
+
+async function launchSSH(peerID, hostname) {
+  const btn = event.target;
+  const origText = btn.textContent;
+  btn.textContent = 'launching…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/ssh?id=' + encodeURIComponent(peerID), {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      alert('SSH error: ' + d.error);
+      btn.textContent = origText;
+      btn.disabled = false;
+    } else {
+      btn.textContent = 'launched ✓';
+      setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2500);
+    }
+  } catch(e) {
+    alert('SSH request failed: ' + e);
+    btn.textContent = origText;
+    btn.disabled = false;
   }
 }
 

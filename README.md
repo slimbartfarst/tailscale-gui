@@ -37,7 +37,10 @@ No networking code written here. The daemon does all the hard work.
 | Subnet route advertising — manual CIDR entry with validation | ✅ |
 | Subnet route advertising — remove from tray | ✅ |
 | Subnet route advertising — add/remove from status window | ✅ |
-| Status window (full dashboard in browser, auto-refresh 5s) | ✅ |
+| SSH peer launch — "SSH…" sub-item per peer in tray (SSH-capable peers only) | ✅ |
+| SSH peer launch — auto-detects terminal ($TERMINAL, DE preference, fallback list) | ✅ |
+| SSH peer launch — "SSH…" button per peer in status window | ✅ |
+| SSH peer launch — configurable terminal cmd and SSH user in config.json | ✅ |
 | Per-peer ping from status window | ✅ |
 | Autostart via XDG desktop entry | ✅ |
 
@@ -45,13 +48,12 @@ No networking code written here. The daemon does all the hard work.
 
 ## What to build next
 
-- **SSH peer launch** — add an "SSH…" button per-peer in the status window
-  that runs `xterm -e ssh <peer-hostname>` (or the user's preferred terminal
-  via `$TERMINAL`).
 - **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
   the auth URL from `st.AuthURL` automatically in the browser.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
   distribution with sandboxed access to the Tailscale socket.
+- **System settings integration** — expose TerminalCmd and SSHUser in the
+  status window so users can configure them without editing JSON.
 
 ---
 
@@ -212,13 +214,18 @@ Then `make build`. The icons are embedded into the binary via `go:embed`.
 
 ## What to build next
 
+- **Subnet route advertising** — `tailscale.com/client/local` exposes
+  `AdvertiseRoutes`; add a submenu to toggle which local subnets this device
+  advertises to the tailnet.
 - **SSH peer launch** — add an "SSH…" button per-peer in the status window
   that runs `xterm -e ssh <hostname>` (or the user's preferred terminal).
 - **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
   the auth URL from `st.AuthURL` automatically in the browser.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
   can be distributed via Flathub with sandboxed access to the Tailscale socket.
-
+- **Taildrop receive notifications with "Open file" action** — use
+  `gdbus` or `go-notify` to attach an action button to the notification
+  that opens the saved file directly.
 
 ---
 
