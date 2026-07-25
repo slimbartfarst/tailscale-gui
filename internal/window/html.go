@@ -279,6 +279,19 @@ const indexHTML = `<!DOCTYPE html>
     </div>
   </section>
 
+  <!-- Accounts -->
+  <section>
+    <h2>Accounts</h2>
+    <div class="card" id="accounts-list">
+      <div class="empty">Loading…</div>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button onclick="addAccount()">Add account…</button>
+      <button class="danger" onclick="logoutAccount()">Log out</button>
+      <span id="account-msg" style="font-size:12px; color:var(--muted); margin-left:4px"></span>
+    </div>
+  </section>
+
   <!-- Advertised subnets -->
   <section>
     <h2>Advertised subnets</h2>
@@ -314,9 +327,10 @@ let lastData = null;
 
 async function refresh() {
   try {
-    const [statusR, routesR] = await Promise.all([
+    const [statusR, routesR, accountsR] = await Promise.all([
       fetch('/api/status'),
       fetch('/api/routes'),
+      fetch('/api/accounts'),
     ]);
     if (!statusR.ok) throw new Error(statusR.statusText);
     const d = await statusR.json();
@@ -325,6 +339,10 @@ async function refresh() {
     if (routesR.ok) {
       const routes = await routesR.json();
       renderRoutes(routes);
+    }
+    if (accountsR.ok) {
+      const accts = await accountsR.json();
+      renderAccounts(accts);
     }
     document.getElementById('last-updated').textContent =
       'Updated ' + new Date().toLocaleTimeString();
@@ -511,6 +529,100 @@ async function sendFile(peerID, hostname) {
   }
   btn.textContent = origText;
   btn.disabled = false;
+}
+
+// ── Accounts ──────────────────────────────────────────────────────────────────
+
+function renderAccounts(accounts) {
+  const list = document.getElementById('accounts-list');
+  if (!accounts || accounts.length === 0) {
+    list.innerHTML = '<div class="empty">No profiles found (requires tailscaled v1.56+).</div>';
+    return;
+  }
+  list.innerHTML = '';
+  accounts.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const check = a.active ? '✓' : ' ';
+    const nameColor = a.active ? 'var(--text)' : 'var(--muted)';
+    const switchBtn = a.active
+      ? ''
+      : `<button onclick="switchAccount('${esc(a.id)}', '${esc(a.name)}')">Switch</button>`;
+    row.innerHTML = ` + "`" + `
+      <span style="font-size:14px; min-width:16px; color:var(--green)">${check}</span>
+      <span style="flex:1; font-size:13px; color:${nameColor}">${esc(a.name)}</span>
+      ${a.active ? '<span style="font-size:11px;color:var(--muted)">active</span>' : ''}
+      ${switchBtn}
+    ` + "`" + `;
+    list.appendChild(row);
+  });
+}
+
+async function switchAccount(id, name) {
+  const msg = document.getElementById('account-msg');
+  msg.textContent = 'switching to ' + name + '…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/accounts/switch?id=' + encodeURIComponent(id), {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      msg.textContent = '✗ ' + d.error;
+      msg.style.color = 'var(--red)';
+    } else {
+      msg.textContent = '✓ switched';
+      msg.style.color = 'var(--green)';
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+      setTimeout(refresh, 1200);
+    }
+  } catch(e) {
+    msg.textContent = '✗ request failed';
+    msg.style.color = 'var(--red)';
+  }
+}
+
+async function addAccount() {
+  const msg = document.getElementById('account-msg');
+  msg.textContent = 'opening browser for login…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/accounts/add', {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      msg.textContent = '✗ ' + d.error;
+      msg.style.color = 'var(--red)';
+    } else {
+      msg.textContent = '✓ browser opened — complete login there';
+      msg.style.color = 'var(--green)';
+      setTimeout(() => { msg.textContent = ''; }, 8000);
+      setTimeout(refresh, 3000);
+    }
+  } catch(e) {
+    msg.textContent = '✗ request failed';
+    msg.style.color = 'var(--red)';
+  }
+}
+
+async function logoutAccount() {
+  if (!confirm('Log out of the current Tailscale account?')) return;
+  const msg = document.getElementById('account-msg');
+  msg.textContent = 'logging out…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/accounts/logout', {method: 'POST'});
+    const d = await r.json();
+    if (d.error) {
+      msg.textContent = '✗ ' + d.error;
+      msg.style.color = 'var(--red)';
+    } else {
+      msg.textContent = '✓ logged out';
+      msg.style.color = 'var(--green)';
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+      setTimeout(refresh, 800);
+    }
+  } catch(e) {
+    msg.textContent = '✗ request failed';
+    msg.style.color = 'var(--red)';
+  }
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────

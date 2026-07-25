@@ -247,7 +247,65 @@ func (c *Client) PushFile(ctx context.Context, target ipn.StableNodeID, size int
 	return c.lc.PushFile(ctx, target, size, name, contentType, r)
 }
 
-// ── Subnet route advertising ──────────────────────────────────────────────────
+// ── Account / profile management ──────────────────────────────────────────────
+
+// ListProfiles returns all login profiles on this device.
+func (c *Client) ListProfiles(ctx context.Context) ([]ipn.LoginProfile, error) {
+	return c.lc.ListProfiles(ctx)
+}
+
+// SwitchProfile makes a different profile active.
+func (c *Client) SwitchProfile(ctx context.Context, id ipn.ProfileID) error {
+	return c.lc.SwitchProfile(ctx, id)
+}
+
+// AddProfile creates a new empty profile ready for login.
+func (c *Client) AddProfile(ctx context.Context) error {
+	return c.lc.AddProfile(ctx)
+}
+
+// DeleteProfile permanently removes a profile.
+func (c *Client) DeleteProfile(ctx context.Context, id ipn.ProfileID) error {
+	return c.lc.DeleteProfile(ctx, id)
+}
+
+// StartLoginInteractive triggers browser-based authentication.
+// After calling this, an AuthURL will appear in the next IPN bus Notify.
+func (c *Client) StartLoginInteractive(ctx context.Context) error {
+	return c.lc.StartLoginInteractive(ctx)
+}
+
+// AuthURL returns the current pending authentication URL from the daemon
+// status, or "" if no auth is needed.
+func (c *Client) AuthURL(ctx context.Context) (string, error) {
+	st, err := c.lc.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	return st.AuthURL, nil
+}
+
+// WatchAuthURL watches the IPN bus for AuthURL events and calls fn each time
+// a non-empty URL appears. Blocks until ctx is cancelled.
+func (c *Client) WatchAuthURL(ctx context.Context, fn func(authURL string)) error {
+	watcher, err := c.lc.WatchIPNBus(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+	for {
+		n, err := watcher.Next()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if n.BrowseToURL != nil && *n.BrowseToURL != "" {
+			fn(*n.BrowseToURL)
+		}
+	}
+}
 
 // AdvertisedRoutes returns the prefixes this device is currently advertising.
 func (c *Client) AdvertisedRoutes(ctx context.Context) ([]netip.Prefix, error) {

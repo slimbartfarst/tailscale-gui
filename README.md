@@ -37,10 +37,15 @@ No networking code written here. The daemon does all the hard work.
 | Subnet route advertising — manual CIDR entry with validation | ✅ |
 | Subnet route advertising — remove from tray | ✅ |
 | Subnet route advertising — add/remove from status window | ✅ |
-| SSH peer launch — "SSH…" sub-item per peer in tray (SSH-capable peers only) | ✅ |
-| SSH peer launch — auto-detects terminal ($TERMINAL, DE preference, fallback list) | ✅ |
-| SSH peer launch — "SSH…" button per peer in status window | ✅ |
-| SSH peer launch — configurable terminal cmd and SSH user in config.json | ✅ |
+| Multi-account — Account submenu with active profile shown | ✅ |
+| Multi-account — switch between profiles from tray | ✅ |
+| Multi-account — add new account (opens browser, auto-handles BrowseToURL) | ✅ |
+| Multi-account — log out current account | ✅ |
+| Multi-account — "Log in…" button shown automatically on NeedsLogin | ✅ |
+| Multi-account — auto-open browser when AuthURL arrives on IPN bus | ✅ |
+| Multi-account — account list + switch/add/logout in status window | ✅ |
+| Multi-account — Account menu hidden on tailscaled < v1.56 | ✅ |
+| Status window (full dashboard in browser, auto-refresh 5s) | ✅ |
 | Per-peer ping from status window | ✅ |
 | Autostart via XDG desktop entry | ✅ |
 
@@ -48,7 +53,14 @@ No networking code written here. The daemon does all the hard work.
 
 ## What to build next
 
-- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
+- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
+  distribution with sandboxed access to the Tailscale socket.
+- **System settings panel** — expose TerminalCmd, SSHUser, TaildropDir in
+  the status window so users never need to edit config.json manually.
+- **Taildrop receive notification with count** — show number of pending files
+  in the tray icon badge (requires libunity or DBus counter on the app icon).
+
+---- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
   the auth URL from `st.AuthURL` automatically in the browser.
 - **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
   distribution with sandboxed access to the Tailscale socket.

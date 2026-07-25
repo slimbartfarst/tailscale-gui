@@ -8,6 +8,7 @@
 //   This device: 100.x.x.x
 //   ─────────────────────────────────
 //   Connect / Disconnect
+//   Log in…                          (shown only when NeedsLogin)
 //   ─────────────────────────────────
 //   Peers (N online) ▶
 //     hostname  100.x.x.x  [OS]
@@ -19,7 +20,7 @@
 //   ─────────────────────────────────
 //   Advertise subnets (N) ▶
 //     ✓ 192.168.1.0/24  [approved ✓]
-//       Remove
+//         Remove
 //     Add route…
 //   ─────────────────────────────────
 //   ✓ Use Tailscale DNS
@@ -31,6 +32,12 @@
 //   ─────────────────────────────────
 //   Open status window…
 //   Admin console…
+//   ─────────────────────────────────
+//   Account (alice@example.com) ▶
+//     ✓ alice@example.com            (active — disabled)
+//       bob@example.com              (click to switch)
+//     Add account…
+//     Log out
 //   ─────────────────────────────────
 //   Quit
 package systray
@@ -46,6 +53,7 @@ import (
 	"time"
 
 	"github.com/tailscale/systray"
+	"github.com/yourname/tailscale-gui/internal/account"
 	"github.com/yourname/tailscale-gui/internal/client"
 	"github.com/yourname/tailscale-gui/internal/config"
 	"github.com/yourname/tailscale-gui/internal/notify"
@@ -67,7 +75,8 @@ type App struct {
 	notifier *notify.Notifier
 	tdrop    *taildrop.Manager
 	win      *window.Manager
-	rm       *routes.Manager // subnet route advertising
+	rm       *routes.Manager
+	am       *account.Manager // multi-account
 
 	// ── static menu items ────────────────────────────────────────────────────
 	mStatus       *systray.MenuItem
@@ -76,24 +85,30 @@ type App struct {
 	mDisconnect   *systray.MenuItem
 	mPeers        *systray.MenuItem
 	mExitNodes    *systray.MenuItem
-	mAdvertise    *systray.MenuItem // "Advertise subnets ▶" parent
-	mAddRoute     *systray.MenuItem // "Add route…" inside advertise submenu
+	mAdvertise    *systray.MenuItem
+	mAddRoute     *systray.MenuItem
 	mAcceptDNS    *systray.MenuItem
 	mAcceptRoutes *systray.MenuItem
 	mShieldsUp    *systray.MenuItem
 	mSendFile     *systray.MenuItem
 	mTaildropDir  *systray.MenuItem
+	mAccount      *systray.MenuItem // "Account ▶" parent
+	mAddAccount   *systray.MenuItem // "Add account…"
+	mLogout       *systray.MenuItem // "Log out"
+	mLoginNow     *systray.MenuItem // "Log in…" (shown when NeedsLogin)
 	mStatusWindow *systray.MenuItem
 	mAdminConsole *systray.MenuItem
 	mQuit         *systray.MenuItem
 
 	// ── dynamic submenu state ─────────────────────────────────────────────────
-	mu            sync.Mutex
-	peerItems     []*peerItem     // live peer submenu items
-	exitNodeItems []*exitNodeItem // live exit node submenu items
-	routeItems    []*routeItem    // live advertised-route submenu items
-	currentState  ipn.State
-	activeExitID  ipn.StableNodeID
+	mu             sync.Mutex
+	peerItems      []*peerItem
+	exitNodeItems  []*exitNodeItem
+	routeItems     []*routeItem
+	accountItems   []*accountItem  // live profile switch sub-items
+	currentState   ipn.State
+	activeExitID   ipn.StableNodeID
+	currentAuthURL string          // latest AuthURL from daemon (empty if none)
 }
 
 type peerItem struct {
@@ -112,6 +127,11 @@ type routeItem struct {
 	route    routes.Route
 	item     *systray.MenuItem // the checkbox item showing the prefix
 	removeIt *systray.MenuItem // "Remove" sub-item
+}
+
+type accountItem struct {
+	profile account.Profile
+	item    *systray.MenuItem // "✓ alice@example.com" or "  bob@example.com"
 }
 
 // New creates the App. Call Run() from main().
@@ -133,6 +153,7 @@ func New(
 		tdrop:    tdrop,
 		win:      win,
 		rm:       routes.New(ts),
+		am:       account.New(ts.LocalClient()),
 	}
 }
 
@@ -189,10 +210,19 @@ func (a *App) onReady() {
 	a.mTaildropDir = systray.AddMenuItem("Open Taildrop folder", "Open the folder where received files are saved")
 	systray.AddSeparator()
 
-	// Status window + admin
+	// Status window + admin + account
 	a.mStatusWindow = systray.AddMenuItem("Open status window…", "Open the full status dashboard in a browser")
 	a.mAdminConsole = systray.AddMenuItem("Admin console…", "Open login.tailscale.com/admin in a browser")
 	systray.AddSeparator()
+
+	// Account submenu
+	a.mAccount    = systray.AddMenuItem("Account", "Manage Tailscale accounts")
+	a.mAddAccount = a.mAccount.AddSubMenuItem("  Add account…", "Log in with a different Tailscale account")
+	a.mLogout     = a.mAccount.AddSubMenuItem("  Log out", "Log out of the current account")
+	a.mLoginNow   = systray.AddMenuItem("Log in…", "Open browser to log in")
+	a.mLoginNow.Hide() // shown only when NeedsLogin
+	systray.AddSeparator()
+
 	a.mQuit = systray.AddMenuItem("Quit", "Quit the tray app")
 
 	// Background workers
@@ -200,6 +230,7 @@ func (a *App) onReady() {
 	go a.watchState()
 	go a.pollPeers()
 	go a.runTaildrop()
+	go a.watchAuthURL()
 
 	// Menu event loop
 	go a.handleMenuEvents()
@@ -215,6 +246,12 @@ func (a *App) initialLoad() {
 	ctx, cancel := context.WithTimeout(a.ctx, 6*time.Second)
 	defer cancel()
 
+	// Hide Account menu on older daemons that don't support profiles.
+	if !account.IsMultiAccountSupported(ctx, a.ts.LocalClient()) {
+		a.mAccount.Hide()
+		log.Printf("account: multi-account not supported by this daemon (tailscaled < v1.56)")
+	}
+
 	st, err := a.ts.Status(ctx)
 	if err != nil {
 		log.Printf("systray: initial status: %v", err)
@@ -229,6 +266,7 @@ func (a *App) initialLoad() {
 	}
 	a.applyPrefs(prefs)
 	a.refreshRoutes(ctx)
+	a.refreshAccounts(ctx)
 }
 
 // ── State watching ────────────────────────────────────────────────────────────
@@ -295,6 +333,7 @@ func (a *App) refreshPeers() {
 	}
 	a.applyFullStatus(st)
 	a.refreshRoutes(ctx)
+	a.refreshAccounts(ctx)
 }
 
 // ── Status application ────────────────────────────────────────────────────────
@@ -356,6 +395,7 @@ func (a *App) applyState(state ipn.State) {
 		a.mDisconnect.Show()
 		a.mExitNodes.Enable()
 		a.mSendFile.Enable()
+		a.mLoginNow.Hide()
 
 	case ipn.Stopped:
 		systray.SetIcon(iconDisconnected)
@@ -365,13 +405,31 @@ func (a *App) applyState(state ipn.State) {
 		a.mDisconnect.Hide()
 		a.mExitNodes.Disable()
 		a.mSendFile.Disable()
+		a.mLoginNow.Hide()
 
 	case ipn.NeedsLogin:
 		systray.SetIcon(iconWarning)
 		systray.SetTooltip("Tailscale — login required")
-		a.mStatus.SetTitle("Status: Login required — visit admin console")
+		a.mStatus.SetTitle("Status: Login required")
 		a.mConnect.Show()
 		a.mDisconnect.Hide()
+		a.mLoginNow.Show()
+		// If we have a pending AuthURL, open it immediately.
+		a.mu.Lock()
+		authURL := a.currentAuthURL
+		a.mu.Unlock()
+		if authURL != "" {
+			go openBrowser(authURL)
+		} else {
+			// Kick off interactive login to get an AuthURL from the daemon.
+			go func() {
+				ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+				defer cancel()
+				if err := a.ts.StartLoginInteractive(ctx); err != nil {
+					log.Printf("start login interactive: %v", err)
+				}
+			}()
+		}
 
 	case ipn.NeedsMachineAuth:
 		systray.SetIcon(iconWarning)
@@ -875,6 +933,195 @@ func (a *App) pickRouteManual() (netip.Prefix, error) {
 	return routes.ParsePrefix(cidr)
 }
 
+// ── Account / multi-user ──────────────────────────────────────────────────────
+
+// watchAuthURL listens on the IPN bus for BrowseToURL notifications.
+// When the daemon wants us to open a browser for login, it sends this.
+// We store the URL, show a notification, and open the browser automatically.
+func (a *App) watchAuthURL() {
+	for {
+		err := a.ts.WatchAuthURL(a.ctx, func(authURL string) {
+			a.mu.Lock()
+			a.currentAuthURL = authURL
+			a.mu.Unlock()
+
+			log.Printf("account: auth URL received")
+			openBrowser(authURL)
+
+			a.notifier.Send(
+				"Tailscale — login required",
+				"A browser window has been opened to complete login.",
+			)
+		})
+		if a.ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Printf("account: auth URL watcher error (%v), restarting", err)
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}
+}
+
+// refreshAccounts reads the profile list from the daemon and rebuilds the
+// Account submenu. Silently no-ops if multi-account is not supported.
+func (a *App) refreshAccounts(ctx context.Context) {
+	profiles, err := a.am.Profiles(ctx)
+	if err != nil {
+		// Not an error worth surfacing — daemon may not support profiles yet.
+		log.Printf("account: list profiles: %v", err)
+		return
+	}
+	a.rebuildAccountSubmenu(profiles)
+}
+
+// rebuildAccountSubmenu replaces the profile list inside the Account submenu.
+//
+// Layout:
+//   Account (alice@example.com)
+//     ✓ alice@example.com       ← active, click = no-op / show info
+//       bob@corp.example         ← inactive, click = switch
+//     ─────────────────
+//     Add account…
+//     Log out
+func (a *App) rebuildAccountSubmenu(profiles []account.Profile) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Hide old profile items.
+	for _, ai := range a.accountItems {
+		ai.item.Hide()
+	}
+	a.accountItems = a.accountItems[:0]
+
+	// Add one sub-item per profile, before Add account / Log out.
+	for _, p := range profiles {
+		checkmark := "  "
+		if p.Active {
+			checkmark = "✓ "
+		}
+		label := checkmark + p.Name
+		tooltip := "Switch to " + p.Name
+		if p.Active {
+			tooltip = "Currently active account"
+		}
+		item := a.mAccount.AddSubMenuItem(label, tooltip)
+		if p.Active {
+			item.Disable() // can't switch to the account already active
+		}
+
+		ai := &accountItem{profile: p, item: item}
+		a.accountItems = append(a.accountItems, ai)
+
+		if !p.Active {
+			go func(prof account.Profile, mi *systray.MenuItem) {
+				for {
+					select {
+					case <-a.ctx.Done():
+						return
+					case _, ok := <-mi.ClickedCh:
+						if !ok {
+							return
+						}
+						go a.doSwitchAccount(prof)
+					}
+				}
+			}(p, item)
+		}
+	}
+
+	// Update parent label to show active account name.
+	activeLabel := "Account"
+	for _, p := range profiles {
+		if p.Active {
+			activeLabel = "Account (" + truncate(p.Name, 28) + ")"
+			break
+		}
+	}
+	a.mAccount.SetTitle(activeLabel)
+}
+
+// ── Account actions ───────────────────────────────────────────────────────────
+
+// doSwitchAccount switches the active Tailscale profile.
+func (a *App) doSwitchAccount(prof account.Profile) {
+	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+	defer cancel()
+
+	if err := a.am.Switch(ctx, prof.ID); err != nil {
+		log.Printf("switch account: %v", err)
+		a.notifier.Send("Account switch failed", err.Error())
+		return
+	}
+	log.Printf("account: switched to %s", prof.Name)
+	a.notifier.Send("Tailscale", "Switched to "+prof.Name)
+	// The IPN state change will trigger applyState and a peer refresh.
+}
+
+// doAddAccount creates a new profile and starts the login flow.
+func (a *App) doAddAccount() {
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := a.am.AddAndLogin(ctx); err != nil {
+		log.Printf("add account: %v", err)
+		a.notifier.Send("Add account failed", err.Error())
+		return
+	}
+	// The daemon will emit NeedsLogin → applyState will call
+	// StartLoginInteractive → BrowseToURL will appear on the IPN bus →
+	// watchAuthURL will open the browser. Nothing more to do here.
+	log.Printf("account: add & login initiated")
+}
+
+// doLogout logs out the current account.
+func (a *App) doLogout() {
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := a.am.Logout(ctx); err != nil {
+		log.Printf("logout: %v", err)
+		a.notifier.Send("Logout failed", err.Error())
+		return
+	}
+	log.Printf("account: logged out")
+	a.notifier.Send("Tailscale", "Logged out")
+}
+
+// doLoginNow opens the browser for login when the user clicks "Log in…".
+func (a *App) doLoginNow() {
+	a.mu.Lock()
+	authURL := a.currentAuthURL
+	a.mu.Unlock()
+
+	if authURL != "" {
+		openBrowser(authURL)
+		return
+	}
+	// No URL cached — ask the daemon for one.
+	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+	defer cancel()
+	if err := a.ts.StartLoginInteractive(ctx); err != nil {
+		log.Printf("login interactive: %v", err)
+		a.notifier.Send("Login failed", err.Error())
+		return
+	}
+	// BrowseToURL will arrive on the IPN bus → watchAuthURL handles it.
+}
+
+// truncate shortens s to at most n runes, appending "…" if cut.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n-1]) + "…"
+}
+
 // ── Taildrop ──────────────────────────────────────────────────────────────────
 
 func (a *App) runTaildrop() {
@@ -946,6 +1193,15 @@ func (a *App) handleMenuEvents() {
 
 		case <-a.mTaildropDir.ClickedCh:
 			openFileManager(a.tdrop.ReceiveDir())
+
+		case <-a.mAddAccount.ClickedCh:
+			go a.doAddAccount()
+
+		case <-a.mLogout.ClickedCh:
+			go a.doLogout()
+
+		case <-a.mLoginNow.ClickedCh:
+			go a.doLoginNow()
 
 		case <-a.mStatusWindow.ClickedCh:
 			go a.win.Open()

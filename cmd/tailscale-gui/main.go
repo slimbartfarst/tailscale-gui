@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/yourname/tailscale-gui/internal/account"
 	"github.com/yourname/tailscale-gui/internal/client"
 	"github.com/yourname/tailscale-gui/internal/config"
 	"github.com/yourname/tailscale-gui/internal/notify"
@@ -19,6 +20,7 @@ import (
 	"github.com/yourname/tailscale-gui/internal/systray"
 	"github.com/yourname/tailscale-gui/internal/taildrop"
 	"github.com/yourname/tailscale-gui/internal/window"
+	tailscaleipn "tailscale.com/ipn"
 )
 
 func main() {
@@ -111,6 +113,29 @@ func main() {
 		}
 		return rm.Remove(c, pfx)
 	}
+
+	// Wire account / profile management callbacks.
+	am := account.New(tsClient.LocalClient())
+	win.AccountsFn = func(c context.Context) ([]window.AccountEntry, error) {
+		profiles, err := am.Profiles(c)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]window.AccountEntry, len(profiles))
+		for i, p := range profiles {
+			out[i] = window.AccountEntry{
+				ID:     string(p.ID),
+				Name:   p.Name,
+				Active: p.Active,
+			}
+		}
+		return out, nil
+	}
+	win.SwitchAccountFn = func(c context.Context, profileID string) error {
+		return am.Switch(c, tailscaleipn.ProfileID(profileID))
+	}
+	win.AddAccountFn = am.AddAndLogin
+	win.LogoutFn    = am.Logout
 
 	app.Run()
 

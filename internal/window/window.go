@@ -54,6 +54,14 @@ type Manager struct {
 	AddRouteFn func(ctx context.Context, cidr string) error
 	// RemoveRouteFn stops advertising a prefix (CIDR string).
 	RemoveRouteFn func(ctx context.Context, cidr string) error
+	// AccountsFn returns current login profiles.
+	AccountsFn func(ctx context.Context) ([]AccountEntry, error)
+	// SwitchAccountFn switches to the profile with the given ID.
+	SwitchAccountFn func(ctx context.Context, profileID string) error
+	// AddAccountFn starts the add-account / login flow.
+	AddAccountFn func(ctx context.Context) error
+	// LogoutFn logs out the current account.
+	LogoutFn func(ctx context.Context) error
 }
 
 // RouteEntry is the wire format for advertised routes sent to the browser.
@@ -61,6 +69,13 @@ type RouteEntry struct {
 	Prefix   string `json:"prefix"`
 	Approved bool   `json:"approved"`
 	Label    string `json:"label"`
+}
+
+// AccountEntry is the wire format for a login profile sent to the browser.
+type AccountEntry struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
 }
 
 // New creates a Manager. port=0 picks a random free port.
@@ -111,6 +126,10 @@ func (m *Manager) start() (string, error) {
 	mux.HandleFunc("/api/routes", m.handleRoutes)
 	mux.HandleFunc("/api/routes/add", m.handleAddRoute)
 	mux.HandleFunc("/api/routes/remove", m.handleRemoveRoute)
+	mux.HandleFunc("/api/accounts", m.handleAccounts)
+	mux.HandleFunc("/api/accounts/switch", m.handleSwitchAccount)
+	mux.HandleFunc("/api/accounts/add", m.handleAddAccount)
+	mux.HandleFunc("/api/accounts/logout", m.handleLogout)
 
 	srv := &http.Server{
 		Handler:      mux,
@@ -370,6 +389,62 @@ func (m *Manager) handleRemoveRoute(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
 	defer cancel()
 	writeResult(w, m.RemoveRouteFn(ctx, cidr))
+}
+
+// handleAccounts returns the list of login profiles as JSON.
+func (m *Manager) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	if m.AccountsFn == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]AccountEntry{})
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
+	defer cancel()
+	entries, err := m.AccountsFn(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(entries)
+}
+
+// handleSwitchAccount switches to the profile identified by ?id=.
+func (m *Manager) handleSwitchAccount(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if m.SwitchAccountFn == nil {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
+	defer cancel()
+	writeResult(w, m.SwitchAccountFn(ctx, id))
+}
+
+// handleAddAccount starts the add-account / login flow.
+func (m *Manager) handleAddAccount(w http.ResponseWriter, r *http.Request) {
+	if m.AddAccountFn == nil {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+	defer cancel()
+	writeResult(w, m.AddAccountFn(ctx))
+}
+
+// handleLogout logs out the current account.
+func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if m.LogoutFn == nil {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+	defer cancel()
+	writeResult(w, m.LogoutFn(ctx))
 }
 
 func writeResult(w http.ResponseWriter, err error) {
