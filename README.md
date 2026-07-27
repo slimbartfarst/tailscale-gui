@@ -51,36 +51,18 @@ No networking code written here. The daemon does all the hard work.
 
 ---
 
-## What to build next
-
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
-  distribution with sandboxed access to the Tailscale socket.
-- **System settings panel** — expose TerminalCmd, SSHUser, TaildropDir in
-  the status window so users never need to edit config.json manually.
-- **Taildrop receive notification with count** — show number of pending files
-  in the tray icon badge (requires libunity or DBus counter on the app icon).
-
----- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
-  the auth URL from `st.AuthURL` automatically in the browser.
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
-  distribution with sandboxed access to the Tailscale socket.
-- **System settings integration** — expose TerminalCmd and SSHUser in the
-  status window so users can configure them without editing JSON.
-
----
-
 ## Prerequisites
 
-| Requirement | Install |
-|---|---|
-| Go 1.23+ | https://go.dev/dl/ |
-| `tailscaled` running | `sudo tailscaled &` or systemd |
-| Operator permission | `sudo tailscale set --operator=$USER` |
-| D-Bus + StatusNotifierItem | GNOME, KDE, COSMIC, waybar, hyprpanel |
-| GNOME only | `gnome-shell-extension-appindicator` |
-| Notifications (optional) | `sudo apt install libnotify-bin` |
-| File send (optional) | `sudo apt install zenity` |
-| Clipboard (optional) | `sudo apt install xclip` or `wl-clipboard` |
+| Requirement                | Install                                    |
+|----------------------------|--------------------------------------------|
+| Go 1.23+                   | https://go.dev/dl/                         |
+| `tailscaled` running       | `sudo tailscaled &` or systemd             |
+| Operator permission        | `sudo tailscale set --operator=$USER`      |
+| D-Bus + StatusNotifierItem | GNOME, KDE, COSMIC, waybar, hyprpanel      |
+| GNOME only                 | `gnome-shell-extension-appindicator`       |
+| Notifications (optional)   | `sudo apt install libnotify-bin`           |
+| File send (optional)       | `sudo apt install zenity`                  |
+| Clipboard (optional)       | `sudo apt install xclip` or `wl-clipboard` |
 
 ---
 
@@ -226,18 +208,8 @@ Then `make build`. The icons are embedded into the binary via `go:embed`.
 
 ## What to build next
 
-- **Subnet route advertising** — `tailscale.com/client/local` exposes
-  `AdvertiseRoutes`; add a submenu to toggle which local subnets this device
-  advertises to the tailnet.
-- **SSH peer launch** — add an "SSH…" button per-peer in the status window
-  that runs `xterm -e ssh <hostname>` (or the user's preferred terminal).
-- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
-  the auth URL from `st.AuthURL` automatically in the browser.
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
-  can be distributed via Flathub with sandboxed access to the Tailscale socket.
-- **Taildrop receive notifications with "Open file" action** — use
-  `gdbus` or `go-notify` to attach an action button to the notification
-  that opens the saved file directly.
+- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
+  distribution with sandboxed access to the Tailscale socket.
 
 ---
 
