@@ -8,7 +8,7 @@ Recommends: zenity, xclip | wl-clipboard
 Suggests: xterm
 Installed-Size: SIZE_PLACEHOLDER
 Maintainer: Your Name <you@example.com>
-Homepage: https://github.com/slimbartfarst/tailscale-gui
+Homepage: https://github.com/yourname/tailscale-gui
 Description: Tailscale Linux system tray GUI
  A Linux system tray application for Tailscale that provides a graphical
  interface for managing your tailnet. Features include peer management,

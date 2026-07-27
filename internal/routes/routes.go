@@ -29,7 +29,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/slimbartfarst/tailscale-gui/internal/client"
+	"github.com/yourname/tailscale-gui/internal/client"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 )

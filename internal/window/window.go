@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/slimbartfarst/tailscale-gui/internal/client"
+	"github.com/yourname/tailscale-gui/internal/client"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/types/ping"

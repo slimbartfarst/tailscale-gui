@@ -3,7 +3,7 @@ Version:        %{version}
 Release:        1%{?dist}
 Summary:        Tailscale Linux system tray GUI
 License:        MIT
-URL:            https://github.com/slimbartfarst/tailscale-gui
+URL:            https://github.com/yourname/tailscale-gui
 BuildArch:      %{buildarch}
 
 Requires:       tailscale >= 1.56
