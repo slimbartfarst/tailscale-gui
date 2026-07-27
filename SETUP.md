@@ -2,14 +2,14 @@
 
 ## 1. Rename the module
 
-Replace every occurrence of `yourname` with your actual GitHub username:
+Replace every occurrence of `slimbartfarst` with your actual GitHub username:
 
 ```bash
 # On Linux/macOS:
-grep -rn "yourname" --include="*.go" --include="*.mod" --include="*.yml" .
+grep -rn "slimbartfarst" --include="*.go" --include="*.mod" --include="*.yml" .
 # Then replace:
 find . -type f \( -name "*.go" -o -name "*.mod" -o -name "*.yml" \) \
-  -exec sed -i 's/yourname/YOUR_GITHUB_USERNAME/g' {} +
+  -exec sed -i 's/slimbartfarst/YOUR_GITHUB_USERNAME/g' {} +
 ```
 
 ## 2. Create the GitHub repo
@@ -83,7 +83,7 @@ Update these files with your real details before tagging a release:
 - `packaging/deb/control` — Maintainer field
 - `packaging/rpm/tailscale-gui.spec` — (maintainer info is in the %changelog)
 - `.github/workflows/build.yml` — `MAINTAINER`, `HOMEPAGE` env vars at the top
-- `go.mod` — module path after replacing `yourname`
+- `go.mod` — module path after replacing `slimbartfarst`
 
 ## 9. Prerequisites for end users
 

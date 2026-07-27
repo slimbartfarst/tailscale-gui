@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/yourname/tailscale-gui/internal/picker"
+	"github.com/slimbartfarst/tailscale-gui/internal/picker"
 )
 
 // Icons are embedded at build time from assets/icons/.

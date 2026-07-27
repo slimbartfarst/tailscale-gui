@@ -13,14 +13,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/yourname/tailscale-gui/internal/account"
-	"github.com/yourname/tailscale-gui/internal/client"
-	"github.com/yourname/tailscale-gui/internal/config"
-	"github.com/yourname/tailscale-gui/internal/notify"
-	"github.com/yourname/tailscale-gui/internal/routes"
-	"github.com/yourname/tailscale-gui/internal/systray"
-	"github.com/yourname/tailscale-gui/internal/taildrop"
-	"github.com/yourname/tailscale-gui/internal/window"
+	"github.com/slimbartfarst/tailscale-gui/internal/account"
+	"github.com/slimbartfarst/tailscale-gui/internal/client"
+	"github.com/slimbartfarst/tailscale-gui/internal/config"
+	"github.com/slimbartfarst/tailscale-gui/internal/notify"
+	"github.com/slimbartfarst/tailscale-gui/internal/routes"
+	"github.com/slimbartfarst/tailscale-gui/internal/systray"
+	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
+	"github.com/slimbartfarst/tailscale-gui/internal/window"
 	tailscaleipn "tailscale.com/ipn"
 )
 

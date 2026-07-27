@@ -21,7 +21,7 @@ env:
   APP_NAME: tailscale-gui
   MAINTAINER: "Your Name <you@example.com>"
   DESCRIPTION: "Tailscale Linux system tray GUI"
-  HOMEPAGE: "https://github.com/yourname/tailscale-gui"
+  HOMEPAGE: "https://github.com/slimbartfarst/tailscale-gui"
 
 jobs:
   # ── 1. Resolve version string ─────────────────────────────────────────────

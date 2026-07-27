@@ -87,7 +87,7 @@ No networking code written here. The daemon does all the hard work.
 ## Quick start
 
 ```bash
-git clone https://github.com/yourname/tailscale-gui
+git clone https://github.com/slimbartfarst/tailscale-gui
 cd tailscale-gui
 
 # Downloads deps, generates placeholder icons, compiles
