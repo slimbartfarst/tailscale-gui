@@ -1,4 +1,4 @@
-module github.com/yourname/tailscale-gui
+module github.com/slimbartfarst/tailscale-gui
 
 go 1.23
 

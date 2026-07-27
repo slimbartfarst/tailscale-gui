@@ -410,15 +410,13 @@ function render(d) {
     row.className = 'row';
     row.id = 'peer-' + safeId(ip);
     const sendBtn = p.Online && p.ID
-      ? `<button title="Send a file to ${esc(p.HostName)} via Taildrop"
-               onclick="sendFile('${esc(p.ID)}', '${esc(p.HostName)}')">Send file…</button>`
+      ? '<button title="Send a file to ' + esc(p.HostName) + ' via Taildrop" onclick="sendFile(\'' + esc(p.ID) + '\', \'' + esc(p.HostName) + '\')">Send file&#8230;</button>'
       : '';
     const pingBtn = p.Online && ip
-      ? `<button onclick="pingPeer('${esc(ip)}')">Ping</button>`
+      ? '<button onclick="pingPeer(\'' + esc(ip) + '\')">Ping</button>'
       : '';
     const sshBtn = p.Online && p.ID && peerSupportsSSH(p)
-      ? `<button title="SSH to ${esc(p.HostName)}"
-               onclick="launchSSH('${esc(p.ID)}', '${esc(p.HostName)}')">SSH…</button>`
+      ? '<button title="SSH to ' + esc(p.HostName) + '" onclick="launchSSH(\'' + esc(p.ID) + '\', \'' + esc(p.HostName) + '\')">SSH&#8230;</button>'
       : '';
     row.innerHTML = ` + "`" + `
       <span class="dot ${p.Online ? 'online' : 'offline'}"></span>
@@ -547,7 +545,7 @@ function renderAccounts(accounts) {
     const nameColor = a.active ? 'var(--text)' : 'var(--muted)';
     const switchBtn = a.active
       ? ''
-      : `<button onclick="switchAccount('${esc(a.id)}', '${esc(a.name)}')">Switch</button>`;
+      : '<button onclick="switchAccount(\'' + esc(a.id) + '\', \'' + esc(a.name) + '\')">Switch</button>';
     row.innerHTML = ` + "`" + `
       <span style="font-size:14px; min-width:16px; color:var(--green)">${check}</span>
       <span style="flex:1; font-size:13px; color:${nameColor}">${esc(a.name)}</span>

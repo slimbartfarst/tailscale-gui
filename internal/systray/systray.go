@@ -59,7 +59,7 @@ import (
 	"github.com/slimbartfarst/tailscale-gui/internal/notify"
 	"github.com/slimbartfarst/tailscale-gui/internal/picker"
 	"github.com/slimbartfarst/tailscale-gui/internal/routes"
-	"github.com/slimbartfarst/tailscale-gui/internal/ssh"
+	sshlaunch "github.com/slimbartfarst/tailscale-gui/internal/ssh"
 	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
 	"github.com/slimbartfarst/tailscale-gui/internal/window"
 	"tailscale.com/ipn"

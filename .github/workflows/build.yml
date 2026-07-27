@@ -19,7 +19,7 @@ on:
 env:
   GO_VERSION: "1.23"
   APP_NAME: tailscale-gui
-  MAINTAINER: "Slimbartfarst <slim_bartfarst@hotmail.co.uk>"
+  MAINTAINER: "Your Name <you@example.com>"
   DESCRIPTION: "Tailscale Linux system tray GUI"
   HOMEPAGE: "https://github.com/slimbartfarst/tailscale-gui"
 
@@ -62,11 +62,14 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          # Only needed for go vet (which parses all imports including CGo ones).
+          # Unit tests themselves run without a display server.
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libayatana-appindicator3-dev \
             libgtk-3-dev \
-            libglib2.0-dev
+            libglib2.0-dev \
+            pkg-config
 
       - name: Download modules
         run: go mod download
@@ -109,16 +112,37 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install system dependencies
+      - name: Enable arm64 multiarch (arm64 only)
+        if: matrix.goarch == 'arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb http/deb [arch=amd64,i386] http/' /etc/apt/sources.list 2>/dev/null || true
+          # Add arm64-specific sources
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse"      | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update -qq
+
+      - name: Install system dependencies (amd64)
+        if: matrix.goarch == 'amd64'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libayatana-appindicator3-dev \
             libgtk-3-dev \
             libglib2.0-dev \
+            pkg-config \
+            gcc
+
+      - name: Install system dependencies (arm64 cross)
+        if: matrix.goarch == 'arm64'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            pkg-config
+            pkg-config \
+            libayatana-appindicator3-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libglib2.0-dev:arm64
 
       - name: Generate placeholder icons
         run: python3 scripts/generate_icons.py
@@ -126,20 +150,34 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Build binary
+      - name: Build binary (amd64)
+        if: matrix.goarch == 'amd64'
         env:
           GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
+          GOARCH: amd64
           CGO_ENABLED: 1
-          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CGO_CFLAGS: ${{ matrix.goarch == 'arm64' && '-I/usr/aarch64-linux-gnu/include' || '' }}
-          CGO_LDFLAGS: ${{ matrix.goarch == 'arm64' && '-L/usr/aarch64-linux-gnu/lib' || '' }}
-          PKG_CONFIG_PATH: ${{ matrix.goarch == 'arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           go build \
             -ldflags="-s -w -X main.Version=${VERSION}" \
-            -o "dist/${{ env.APP_NAME }}-linux-${{ matrix.goarch }}" \
+            -o "dist/${{ env.APP_NAME }}-linux-amd64" \
+            ./cmd/${{ env.APP_NAME }}
+
+      - name: Build binary (arm64 cross)
+        if: matrix.goarch == 'arm64'
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 1
+          CC: aarch64-linux-gnu-gcc
+          CXX: aarch64-linux-gnu-g++
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          go build \
+            -ldflags="-s -w -X main.Version=${VERSION}" \
+            -o "dist/${{ env.APP_NAME }}-linux-arm64" \
             ./cmd/${{ env.APP_NAME }}
 
       - name: Upload binary artifact

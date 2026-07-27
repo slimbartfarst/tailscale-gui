@@ -4,7 +4,6 @@
 // systray library (which requires it on Linux via AppIndicator/D-Bus).
 package main
 
-
 import (
 	"context"
 	"flag"
@@ -22,9 +21,8 @@ import (
 	"github.com/slimbartfarst/tailscale-gui/internal/systray"
 	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
 	"github.com/slimbartfarst/tailscale-gui/internal/window"
-	"tailscale.com/ipn"
+	tailscaleipn "tailscale.com/ipn"
 )
-
 
 // Version is set at build time via:
 //
@@ -32,7 +30,6 @@ import (
 //
 // When built without the flag it defaults to "dev".
 var Version = "dev"
-
 
 func main() {
 	socketPath := flag.String("socket", "", "tailscaled socket path (auto-detected if empty)")

@@ -1,1 +1,20 @@
+# Build outputs
+tailscale-gui
+dist/
+build/
 
+# Go
+*.test
+*.out
+vendor/
+
+# Icons (generated — committed only if you have real artwork)
+# Comment these out once you replace placeholder PNGs with real icons:
+# assets/icons/*.png
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
