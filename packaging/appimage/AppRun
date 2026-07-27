@@ -1,0 +1,16 @@
+#!/bin/sh
+#
+# AppRun — entry point for the tailscale-gui AppImage.
+#
+# Sets up the environment so the binary can find its resources and
+# then launches the application.
+
+# Resolve the directory containing this AppRun script.
+SELF="$(readlink -f "$0")"
+HERE="$(dirname "$SELF")"
+
+export PATH="${HERE}/usr/bin:${PATH}"
+export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+# Launch the binary, passing through all arguments.
+exec "${HERE}/usr/bin/tailscale-gui" "$@"

@@ -4,29 +4,46 @@
 // systray library (which requires it on Linux via AppIndicator/D-Bus).
 package main
 
+
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/yourname/tailscale-gui/internal/account"
-	"github.com/yourname/tailscale-gui/internal/client"
-	"github.com/yourname/tailscale-gui/internal/config"
-	"github.com/yourname/tailscale-gui/internal/notify"
-	"github.com/yourname/tailscale-gui/internal/routes"
-	"github.com/yourname/tailscale-gui/internal/systray"
-	"github.com/yourname/tailscale-gui/internal/taildrop"
-	"github.com/yourname/tailscale-gui/internal/window"
+	"github.com/slimbartfarst/tailscale-gui/internal/account"
+	"github.com/slimbartfarst/tailscale-gui/internal/client"
+	"github.com/slimbartfarst/tailscale-gui/internal/config"
+	"github.com/slimbartfarst/tailscale-gui/internal/notify"
+	"github.com/slimbartfarst/tailscale-gui/internal/routes"
+	"github.com/slimbartfarst/tailscale-gui/internal/systray"
+	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
+	"github.com/slimbartfarst/tailscale-gui/internal/window"
 	tailscaleipn "tailscale.com/ipn"
 )
 
+
+// Version is set at build time via:
+//
+//	go build -ldflags="-X main.Version=1.2.3"
+//
+// When built without the flag it defaults to "dev".
+var Version = "dev"
+
+
 func main() {
 	socketPath := flag.String("socket", "", "tailscaled socket path (auto-detected if empty)")
-	verbose := flag.Bool("v", false, "verbose logging")
+	verbose    := flag.Bool("v", false, "verbose logging")
+	showVer    := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("tailscale-gui %s\n", Version)
+		os.Exit(0)
+	}
 
 	if !*verbose {
 		log.SetFlags(log.Ltime | log.Lshortfile)

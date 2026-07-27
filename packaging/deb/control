@@ -1,0 +1,18 @@
+Package: tailscale-gui
+Version: VERSION_PLACEHOLDER
+Section: net
+Priority: optional
+Architecture: ARCH_PLACEHOLDER
+Depends: tailscale (>= 1.56), libayatana-appindicator3-1 | libappindicator3-1, libnotify4, dbus
+Recommends: zenity, xclip | wl-clipboard
+Suggests: xterm
+Installed-Size: SIZE_PLACEHOLDER
+Maintainer: Your Name <you@example.com>
+Homepage: https://github.com/slimbartfarst/tailscale-gui
+Description: Tailscale Linux system tray GUI
+ A Linux system tray application for Tailscale that provides a graphical
+ interface for managing your tailnet. Features include peer management,
+ exit node selection, subnet route advertising, Taildrop file transfer,
+ SSH peer launch, multi-account support, and a browser-based status dashboard.
+ .
+ Requires tailscaled to be running. See: https://tailscale.com/download/linux

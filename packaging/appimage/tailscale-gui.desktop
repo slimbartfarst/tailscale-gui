@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Tailscale
+GenericName=VPN Client
+Comment=Tailscale system tray for Linux
+Exec=tailscale-gui
+Icon=tailscale-gui
+Terminal=false
+Type=Application
+Categories=Network;System;
+Keywords=vpn;tailscale;wireguard;network;
+StartupNotify=false
