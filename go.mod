@@ -5,7 +5,7 @@ go 1.23
 require (
 	fyne.io/systray v1.11.0
 	tailscale.com v1.78.0
-	golang.org/x/net v0.30.0
+	proxy.golang.org/x/net v0.30.0
 )
 
 // Run `go mod tidy` after cloning to resolve all transitive deps.
