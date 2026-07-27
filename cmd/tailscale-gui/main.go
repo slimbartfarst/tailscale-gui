@@ -22,7 +22,7 @@ import (
 	"github.com/slimbartfarst/tailscale-gui/internal/systray"
 	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
 	"github.com/slimbartfarst/tailscale-gui/internal/window"
-	tailscaleipn "tailscale.com/ipn"
+	"tailscale.com/ipn"
 )
 
 
