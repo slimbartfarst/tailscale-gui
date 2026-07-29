@@ -1,6 +1,6 @@
 // internal/client/client.go
 //
-// Wraps tailscale.com/client/local so the rest of the app stays insulated
+// Wraps tailscale.com/client/tailscale so the rest of the app stays insulated
 // from the upstream API. All daemon interaction lives here.
 package client
 
@@ -12,20 +12,21 @@ import (
 	"sort"
 	"time"
 
-	"tailscale.com/client/local"
+	tsclient "tailscale.com/client/tailscale"
 	"tailscale.com/ipn"
+	"tailscale.com/tailcfg"
 	"tailscale.com/ipn/ipnstate"
 )
 
 // Client is a handle to the local tailscaled daemon.
 type Client struct {
-	lc *local.Client
+	lc *tsclient.LocalClient
 }
 
 // New returns a Client connected to tailscaled.
 // socketPath may be empty to use the platform default.
 func New(ctx context.Context, socketPath string) (*Client, error) {
-	lc := &local.Client{}
+	lc := &tsclient.LocalClient{}
 	if socketPath != "" {
 		lc.Socket = socketPath
 	}
@@ -99,7 +100,7 @@ func (c *Client) ExitNodes(ctx context.Context) ([]*ipnstate.PeerStatus, error) 
 
 // ActiveExitNodeID returns the StableNodeID of the currently active exit node,
 // or "" if none is set.
-func (c *Client) ActiveExitNodeID(ctx context.Context) (ipn.StableNodeID, error) {
+func (c *Client) ActiveExitNodeID(ctx context.Context) (tailcfg.StableNodeID, error) {
 	prefs, err := c.lc.GetPrefs(ctx)
 	if err != nil {
 		return "", err
@@ -135,7 +136,7 @@ func (c *Client) Logout(ctx context.Context) error {
 // ── Exit nodes ────────────────────────────────────────────────────────────────
 
 // SetExitNode sets the exit node to the peer with the given StableNodeID.
-func (c *Client) SetExitNode(ctx context.Context, id ipn.StableNodeID) error {
+func (c *Client) SetExitNode(ctx context.Context, id tailcfg.StableNodeID) error {
 	_, err := c.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
 		ExitNodeIDSet: true,
 		Prefs:         ipn.Prefs{ExitNodeID: id},
@@ -236,22 +237,23 @@ func (c *Client) watchOnce(ctx context.Context, fn func(StateChange)) error {
 
 // ── File sharing (Taildrop) ───────────────────────────────────────────────────
 
-// LocalClient exposes the underlying local.Client for packages that need it
+// LocalClient exposes the underlying tsclient.LocalClient for packages that need it
 // directly (e.g. Taildrop, Ping).
-func (c *Client) LocalClient() *local.Client {
+func (c *Client) LocalClient() *tsclient.LocalClient {
 	return c.lc
 }
 
-// PushFile sends a file to a peer. Thin pass-through to local.Client.PushFile.
-func (c *Client) PushFile(ctx context.Context, target ipn.StableNodeID, size int64, name, contentType string, r io.Reader) error {
-	return c.lc.PushFile(ctx, target, size, name, contentType, r)
+// PushFile sends a file to a peer. Thin pass-through to tsclient.LocalClient.PushFile.
+func (c *Client) PushFile(ctx context.Context, target tailcfg.StableNodeID, size int64, name string, r io.Reader) error {
+	return c.lc.PushFile(ctx, target, size, name, r)
 }
 
 // ── Account / profile management ──────────────────────────────────────────────
 
 // ListProfiles returns all login profiles on this device.
 func (c *Client) ListProfiles(ctx context.Context) ([]ipn.LoginProfile, error) {
-	return c.lc.ListProfiles(ctx)
+	_, all, err := c.lc.ProfileStatus(ctx)
+	return all, err
 }
 
 // SwitchProfile makes a different profile active.
@@ -261,7 +263,7 @@ func (c *Client) SwitchProfile(ctx context.Context, id ipn.ProfileID) error {
 
 // AddProfile creates a new empty profile ready for login.
 func (c *Client) AddProfile(ctx context.Context) error {
-	return c.lc.AddProfile(ctx)
+	return c.lc.SwitchToEmptyProfile(ctx)
 }
 
 // DeleteProfile permanently removes a profile.

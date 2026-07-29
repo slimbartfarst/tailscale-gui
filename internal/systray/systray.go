@@ -63,6 +63,7 @@ import (
 	"github.com/slimbartfarst/tailscale-gui/internal/taildrop"
 	"github.com/slimbartfarst/tailscale-gui/internal/window"
 	"tailscale.com/ipn"
+	"tailscale.com/tailcfg"
 	"tailscale.com/ipn/ipnstate"
 )
 
@@ -107,7 +108,7 @@ type App struct {
 	routeItems     []*routeItem
 	accountItems   []*accountItem  // live profile switch sub-items
 	currentState   ipn.State
-	activeExitID   ipn.StableNodeID
+	activeExitID   tailcfg.StableNodeID
 	currentAuthURL string          // latest AuthURL from daemon (empty if none)
 }
 
@@ -604,7 +605,7 @@ func osLabel(os string) string {
 // ── Exit node submenu ─────────────────────────────────────────────────────────
 
 // rebuildExitNodeSubmenu replaces the exit node submenu with the current list.
-func (a *App) rebuildExitNodeSubmenu(peers []*ipnstate.PeerStatus, activeID ipn.StableNodeID) {
+func (a *App) rebuildExitNodeSubmenu(peers []*ipnstate.PeerStatus, activeID tailcfg.StableNodeID) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -664,7 +665,7 @@ func (a *App) rebuildExitNodeSubmenu(peers []*ipnstate.PeerStatus, activeID ipn.
 		ei := &exitNodeItem{peer: p, item: item}
 		a.exitNodeItems = append(a.exitNodeItems, ei)
 
-		go func(nodeID ipn.StableNodeID, hostname string, mi *systray.MenuItem) {
+		go func(nodeID tailcfg.StableNodeID, hostname string, mi *systray.MenuItem) {
 			for {
 				select {
 				case <-a.ctx.Done():
@@ -1237,7 +1238,7 @@ func (a *App) doDisconnect() {
 	}
 }
 
-func (a *App) doSetExitNode(id ipn.StableNodeID, hostname string) {
+func (a *App) doSetExitNode(id tailcfg.StableNodeID, hostname string) {
 	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
 	defer cancel()
 	if err := a.ts.SetExitNode(ctx, id); err != nil {

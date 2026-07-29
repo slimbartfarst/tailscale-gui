@@ -10,7 +10,7 @@
 //      was restarting (5-second interval).
 //
 // Sending:
-//   Wraps local.Client.PushFile with a progress channel.
+//   Wraps tsclient.LocalClient.PushFile with a progress channel.
 package taildrop
 
 import (
@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"tailscale.com/client/local"
-	"tailscale.com/ipn"
+	tsclient "tailscale.com/client/tailscale"
+	"tailscale.com/tailcfg"
 	"tailscale.com/ipn/ipnstate"
 
 	"github.com/slimbartfarst/tailscale-gui/internal/client"
@@ -192,16 +192,9 @@ func (m *Manager) drainWaitingFiles(
 		return
 	}
 	for _, wf := range files {
-		// Try to resolve sender IP → hostname.
-		from := ""
-		if wf.Sender != "" {
-			if name, ok := peers[wf.Sender]; ok {
-				from = name
-			} else {
-				from = wf.Sender // fall back to raw IP
-			}
-		}
-		ev := m.saveFile(ctx, lc, wf.Name, from)
+		// Sender IP not available in tailscale v1.78 apitype.WaitingFile.
+		// Will be available in newer versions via wf.Sender.
+		ev := m.saveFile(ctx, lc, wf.Name, "")
 		if onFile != nil {
 			onFile(ev)
 		}
@@ -211,7 +204,7 @@ func (m *Manager) drainWaitingFiles(
 // saveFile claims a single waiting file from tailscaled and writes it to disk.
 func (m *Manager) saveFile(
 	ctx context.Context,
-	lc *local.Client,
+	lc *tsclient.LocalClient,
 	name string,
 	from string,
 ) FileEvent {
@@ -275,7 +268,7 @@ func (m *Manager) uniqueDest(name string) string {
 // Progress is reported via the returned channel; closed when done or failed.
 func (m *Manager) SendFile(
 	ctx context.Context,
-	targetID ipn.StableNodeID,
+	targetID tailcfg.StableNodeID,
 	filePath string,
 ) (<-chan SendProgress, error) {
 	f, err := os.Open(filePath)
@@ -288,11 +281,6 @@ func (m *Manager) SendFile(
 		return nil, fmt.Errorf("stat: %w", err)
 	}
 
-	ext := filepath.Ext(filePath)
-	contentType := mime.TypeByExtension(ext)
-	if contentType == "" {
-		contentType = ContentTypeForFile(filePath)
-	}
 
 	progress := make(chan SendProgress, 16)
 	total := info.Size()
@@ -303,7 +291,7 @@ func (m *Manager) SendFile(
 		defer close(progress)
 
 		pr := &progressReader{r: f, total: total, ch: progress, name: name}
-		err := m.ts.LocalClient().PushFile(ctx, targetID, total, name, contentType, pr)
+		err := m.ts.LocalClient().PushFile(ctx, targetID, total, name, pr)
 		if err != nil {
 			progress <- SendProgress{Name: name, Total: total, Err: err}
 		} else {

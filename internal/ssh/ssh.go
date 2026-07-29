@@ -62,7 +62,7 @@ func PeerSupportsSSH(p *ipnstate.PeerStatus) bool {
 	if !p.Online {
 		return false
 	}
-	if p.TailscaleSSHEnabled {
+	if len(p.SSH_HostKeys) > 0 {
 		return true
 	}
 	// Show SSH option for any online Linux/macOS/FreeBSD peer —

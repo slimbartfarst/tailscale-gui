@@ -477,7 +477,7 @@ async function pingPeer(ip) {
 // peerSupportsSSH mirrors the Go logic in internal/ssh/ssh.go:PeerSupportsSSH.
 function peerSupportsSSH(p) {
   if (!p.Online) return false;
-  if (p.TailscaleSSHEnabled) return true;
+  if (p.sshHostKeys && p.sshHostKeys.length > 0) return true;
   const linuxLike = ['linux', 'darwin', 'freebsd', 'openbsd', 'netbsd'];
   return linuxLike.includes((p.OS || '').toLowerCase()) &&
          p.TailscaleIPs && p.TailscaleIPs.length > 0;

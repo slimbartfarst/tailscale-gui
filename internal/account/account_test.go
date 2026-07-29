@@ -26,14 +26,14 @@ type mockClient struct {
 	loginErr    error
 }
 
-func (m *mockClient) ListProfiles(_ context.Context) ([]ipn.LoginProfile, error) {
-	return m.profiles, m.listErr
+func (m *mockClient) ProfileStatus(_ context.Context) (current ipn.LoginProfile, all []ipn.LoginProfile, err error) {
+	return ipn.LoginProfile{}, m.profiles, m.listErr
 }
 func (m *mockClient) SwitchProfile(_ context.Context, id ipn.ProfileID) error {
 	m.switchedTo = id
 	return m.switchErr
 }
-func (m *mockClient) AddProfile(_ context.Context) error {
+func (m *mockClient) SwitchToEmptyProfile(_ context.Context) error {
 	m.addCalled = true
 	return m.addErr
 }

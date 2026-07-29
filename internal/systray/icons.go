@@ -17,16 +17,17 @@ import (
 // Icons are embedded at build time from assets/icons/.
 // Replace the PNGs with real 32×32 artwork before shipping.
 
+//go:embed icons/connected.png
+var iconConnected []byte
 
-//go:embed ../../assets/icons/disconnected.png
+//go:embed icons/disconnected.png
 var iconDisconnected []byte
 
-//go:embed ../../assets/icons/connecting.png
+//go:embed icons/connecting.png
 var iconConnecting []byte
 
-//go:embed ../../assets/icons/warning.png
+//go:embed icons/warning.png
 var iconWarning []byte
-
 
 // ── OS helpers ────────────────────────────────────────────────────────────────
 
@@ -51,9 +52,7 @@ func browserCmd(url string) (string, []string) {
 
 // openFileManager opens a directory in the desktop file manager.
 func openFileManager(dir string) {
-	cmd, args ://go:embed ../../assets/icons/connected.png
-var iconConnected []byte
-= fileManagerCmd(dir)
+	cmd, args := fileManagerCmd(dir)
 	if err := exec.Command(cmd, args...).Start(); err != nil {
 		log.Printf("openFileManager: %v", err)
 	}

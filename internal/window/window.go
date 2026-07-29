@@ -27,9 +27,8 @@ import (
 	"time"
 
 	"github.com/slimbartfarst/tailscale-gui/internal/client"
-	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/types/ping"
+	"tailscale.com/tailcfg"
 )
 
 //go:embed static
@@ -164,7 +163,7 @@ type statusPayload struct {
 	Self        *ipnstate.PeerStatus   `json:"self"`
 	Peers       []*ipnstate.PeerStatus `json:"peers"`
 	ExitNodes   []*ipnstate.PeerStatus `json:"exit_nodes"`
-	ActiveExit  ipn.StableNodeID       `json:"active_exit_node"`
+	ActiveExit  tailcfg.StableNodeID       `json:"active_exit_node"`
 	TailnetIPs  []string               `json:"tailnet_ips"`
 	BackendState string                `json:"backend_state"`
 	Prefs       *prefPayload           `json:"prefs"`
@@ -239,7 +238,7 @@ func (m *Manager) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleSetExitNode(w http.ResponseWriter, r *http.Request) {
-	id := ipn.StableNodeID(r.URL.Query().Get("id"))
+	id := tailcfg.StableNodeID(r.URL.Query().Get("id"))
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
@@ -294,7 +293,7 @@ func (m *Manager) handlePing(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 
-	result, err := m.ts.LocalClient().Ping(ctx, addr, ping.TypeTailscale)
+	result, err := m.ts.LocalClient().Ping(ctx, addr, tailcfg.PingTSMP)
 	if err != nil {
 		writeResult(w, err)
 		return

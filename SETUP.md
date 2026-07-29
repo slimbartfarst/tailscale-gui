@@ -6,10 +6,10 @@ Replace every occurrence of `slimbartfarst` with your actual GitHub username:
 
 ```bash
 # On Linux/macOS:
-grep -rn "yourname" --include="*.go" --include="*.mod" --include="*.yml" .
+grep -rn "slimbartfarst" --include="*.go" --include="*.mod" --include="*.yml" .
 # Then replace:
 find . -type f \( -name "*.go" -o -name "*.mod" -o -name "*.yml" \) \
-  -exec sed -i 's/yourname/YOUR_GITHUB_USERNAME/g' {} +
+  -exec sed -i 's/slimbartfarst/YOUR_GITHUB_USERNAME/g' {} +
 ```
 
 ## 2. Create the GitHub repo

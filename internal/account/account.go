@@ -52,9 +52,9 @@ type Manager struct {
 // localClient is the subset of local.Client used here.
 // Using an interface makes unit testing possible.
 type localClient interface {
-	ListProfiles(ctx context.Context) ([]ipn.LoginProfile, error)
+	ProfileStatus(ctx context.Context) (current ipn.LoginProfile, all []ipn.LoginProfile, err error)
 	SwitchProfile(ctx context.Context, id ipn.ProfileID) error
-	AddProfile(ctx context.Context) error
+	SwitchToEmptyProfile(ctx context.Context) error
 	DeleteProfile(ctx context.Context, id ipn.ProfileID) error
 	StartLoginInteractive(ctx context.Context) error
 	Logout(ctx context.Context) error
@@ -71,7 +71,7 @@ func New(lc localClient) *Manager {
 // Profiles returns all known login profiles, with the active one marked.
 // Profiles are sorted: active first, then alphabetically by name.
 func (m *Manager) Profiles(ctx context.Context) ([]Profile, error) {
-	raw, err := m.lc.ListProfiles(ctx)
+	current, raw, err := m.lc.ProfileStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list profiles: %w", err)
 	}
@@ -81,8 +81,8 @@ func (m *Manager) Profiles(ctx context.Context) ([]Profile, error) {
 		profiles = append(profiles, Profile{
 			ID:          r.ID,
 			Name:        displayName(r),
-			NetworkName: r.NetworkMagicDNSSuffix,
-			Active:      r.Active,
+			NetworkName: r.NetworkProfile.MagicDNSName,
+			Active:      r.ID == current.ID,
 		})
 	}
 
@@ -127,7 +127,7 @@ func (m *Manager) Switch(ctx context.Context, id ipn.ProfileID) error {
 // The daemon emits NeedsLogin; the caller should then watch for an AuthURL
 // on the IPN bus and open it in the browser.
 func (m *Manager) AddAndLogin(ctx context.Context) error {
-	if err := m.lc.AddProfile(ctx); err != nil {
+	if err := m.lc.SwitchToEmptyProfile(ctx); err != nil {
 		return fmt.Errorf("add profile: %w", err)
 	}
 	if err := m.lc.StartLoginInteractive(ctx); err != nil {
@@ -173,13 +173,13 @@ func displayName(p ipn.LoginProfile) string {
 	if p.UserProfile.LoginName != "" {
 		return p.UserProfile.LoginName
 	}
-	if p.NetworkMagicDNSSuffix != "" {
+	if p.NetworkProfile.MagicDNSName != "" {
 		// "alice.example.ts.net" → "example.ts.net" (strip first label)
-		parts := strings.SplitN(p.NetworkMagicDNSSuffix, ".", 2)
+		parts := strings.SplitN(p.NetworkProfile.MagicDNSName, ".", 2)
 		if len(parts) == 2 {
 			return parts[1]
 		}
-		return p.NetworkMagicDNSSuffix
+		return p.NetworkProfile.MagicDNSName
 	}
 	return string(p.ID)
 }
@@ -188,7 +188,7 @@ func displayName(p ipn.LoginProfile) string {
 // switching (tailscaled v1.56+). Returns false if ListProfiles errors with
 // "not implemented" or "unimplemented".
 func IsMultiAccountSupported(ctx context.Context, lc localClient) bool {
-	_, err := lc.ListProfiles(ctx)
+	_, _, err := lc.ProfileStatus(ctx)
 	if err == nil {
 		return true
 	}
