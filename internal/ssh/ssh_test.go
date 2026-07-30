@@ -15,11 +15,14 @@ import (
 
 func makePeer(hostname, dnsName, osName string, sshEnabled bool, ips ...string) *ipnstate.PeerStatus {
 	p := &ipnstate.PeerStatus{
-		HostName:            hostname,
-		DNSName:             dnsName,
-		OS:                  osName,
-		Online:              true,
-		TailscaleSSHEnabled: sshEnabled,
+		HostName: hostname,
+		DNSName:  dnsName,
+		OS:       osName,
+		Online:   true,
+	}
+	// SSH_HostKeys presence indicates Tailscale SSH is enabled (v1.78 API)
+	if sshEnabled {
+		p.SSH_HostKeys = []string{"ecdsa-sha2-nistp256 AAAA..."}
 	}
 	for _, s := range ips {
 		if a, err := netip.ParseAddr(s); err == nil {
@@ -34,7 +37,7 @@ func makePeer(hostname, dnsName, osName string, sshEnabled bool, ips ...string) 
 func TestPeerSupportsSSH_TailscaleSSHEnabled(t *testing.T) {
 	p := makePeer("alice", "", "linux", true, "100.64.0.1")
 	if !PeerSupportsSSH(p) {
-		t.Error("should support SSH when TailscaleSSHEnabled=true")
+		t.Error("should support SSH when SSH_HostKeys present")
 	}
 }
 

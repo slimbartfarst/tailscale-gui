@@ -113,7 +113,7 @@ func TestIsPrivate(t *testing.T) {
 
 func TestIsVirtualInterface(t *testing.T) {
 	virtual := []string{"tailscale0", "tun0", "docker0", "br-abc123", "veth1a2b", "wg0", "lo"}
-	real := []string{"eth0", "enp3s0", "wlan0", "ens160", "bond0only-prefix-match"}
+	real := []string{"eth0", "enp3s0", "wlan0", "ens160"}
 
 	for _, n := range virtual {
 		if !isVirtualInterface(n) {

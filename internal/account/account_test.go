@@ -13,21 +13,31 @@ import (
 // ── mock localClient ──────────────────────────────────────────────────────────
 
 type mockClient struct {
-	profiles    []ipn.LoginProfile
-	switchedTo  ipn.ProfileID
-	addCalled   bool
-	deletedID   ipn.ProfileID
-	loginCalled bool
+	profiles     []ipn.LoginProfile
+	currentID    ipn.ProfileID // which profile ProfileStatus returns as "current"
+	switchedTo   ipn.ProfileID
+	addCalled    bool
+	deletedID    ipn.ProfileID
+	loginCalled  bool
 	logoutCalled bool
-	listErr     error
-	switchErr   error
-	addErr      error
-	deleteErr   error
-	loginErr    error
+	listErr      error
+	switchErr    error
+	addErr       error
+	deleteErr    error
+	loginErr     error
 }
 
 func (m *mockClient) ProfileStatus(_ context.Context) (current ipn.LoginProfile, all []ipn.LoginProfile, err error) {
-	return ipn.LoginProfile{}, m.profiles, m.listErr
+	if m.listErr != nil {
+		return ipn.LoginProfile{}, nil, m.listErr
+	}
+	for _, p := range m.profiles {
+		if p.ID == m.currentID {
+			current = p
+			break
+		}
+	}
+	return current, m.profiles, nil
 }
 func (m *mockClient) SwitchProfile(_ context.Context, id ipn.ProfileID) error {
 	m.switchedTo = id
@@ -65,9 +75,10 @@ func TestProfiles_Empty(t *testing.T) {
 
 func TestProfiles_ActiveFirst(t *testing.T) {
 	mc := &mockClient{
+		currentID: "a",
 		profiles: []ipn.LoginProfile{
-			{ID: "b", Name: "bob@example.com", Active: false},
-			{ID: "a", Name: "alice@example.com", Active: true},
+			{ID: "b", Name: "bob@example.com"},
+			{ID: "a", Name: "alice@example.com"},
 		},
 	}
 	mgr := New(mc)
@@ -89,9 +100,9 @@ func TestProfiles_ActiveFirst(t *testing.T) {
 func TestProfiles_SortedAlphabetically(t *testing.T) {
 	mc := &mockClient{
 		profiles: []ipn.LoginProfile{
-			{ID: "z", Name: "zoe@example.com", Active: false},
-			{ID: "a", Name: "alice@example.com", Active: false},
-			{ID: "m", Name: "mallory@example.com", Active: false},
+			{ID: "z", Name: "zoe@example.com"},
+			{ID: "a", Name: "alice@example.com"},
+			{ID: "m", Name: "mallory@example.com"},
 		},
 	}
 	mgr := New(mc)
@@ -117,9 +128,10 @@ func TestProfiles_ListError(t *testing.T) {
 
 func TestActiveProfile_Found(t *testing.T) {
 	mc := &mockClient{
+		currentID: "a",
 		profiles: []ipn.LoginProfile{
-			{ID: "a", Name: "alice@example.com", Active: true},
-			{ID: "b", Name: "bob@example.com", Active: false},
+			{ID: "a", Name: "alice@example.com"},
+			{ID: "b", Name: "bob@example.com"},
 		},
 	}
 	mgr := New(mc)
@@ -134,8 +146,9 @@ func TestActiveProfile_Found(t *testing.T) {
 
 func TestActiveProfile_NoneActive(t *testing.T) {
 	mc := &mockClient{
+		// currentID is zero-value "" — no profile matches
 		profiles: []ipn.LoginProfile{
-			{ID: "b", Name: "bob@example.com", Active: false},
+			{ID: "b", Name: "bob@example.com"},
 		},
 	}
 	mgr := New(mc)
@@ -175,7 +188,7 @@ func TestAddAndLogin_BothCalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !mc.addCalled {
-		t.Error("AddProfile should have been called")
+		t.Error("SwitchToEmptyProfile should have been called")
 	}
 	if !mc.loginCalled {
 		t.Error("StartLoginInteractive should have been called")
@@ -188,9 +201,8 @@ func TestAddAndLogin_AddError(t *testing.T) {
 	if err := mgr.AddAndLogin(context.Background()); err == nil {
 		t.Error("expected error")
 	}
-	// StartLoginInteractive should NOT be called if AddProfile fails
 	if mc.loginCalled {
-		t.Error("StartLoginInteractive should not be called after AddProfile error")
+		t.Error("StartLoginInteractive should not be called after add error")
 	}
 }
 
@@ -226,7 +238,9 @@ func TestDisplayName_LoginName(t *testing.T) {
 }
 
 func TestDisplayName_NetworkSuffix(t *testing.T) {
-	p := ipn.LoginProfile{NetworkMagicDNSSuffix: "example.ts.net"}
+	p := ipn.LoginProfile{
+		NetworkProfile: ipn.NetworkProfile{MagicDNSName: "example.ts.net"},
+	}
 	got := displayName(p)
 	if got == "" {
 		t.Error("expected non-empty display name from network suffix")
@@ -245,7 +259,7 @@ func TestDisplayName_IDFallback(t *testing.T) {
 func TestIsMultiAccountSupported_Success(t *testing.T) {
 	mc := &mockClient{profiles: []ipn.LoginProfile{}}
 	if !IsMultiAccountSupported(context.Background(), mc) {
-		t.Error("should be supported when ListProfiles succeeds")
+		t.Error("should be supported when ProfileStatus succeeds")
 	}
 }
 
@@ -257,8 +271,6 @@ func TestIsMultiAccountSupported_NotImplemented(t *testing.T) {
 }
 
 func TestIsMultiAccountSupported_OtherError(t *testing.T) {
-	// A real daemon error (e.g. connection refused) should not be mistaken
-	// for "not supported".
 	mc := &mockClient{listErr: errors.New("connection refused")}
 	if !IsMultiAccountSupported(context.Background(), mc) {
 		t.Error("connection error should not mark feature as unsupported")
