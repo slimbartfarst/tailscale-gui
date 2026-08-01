@@ -230,14 +230,19 @@ jobs:
             packaging/tailscale-gui.desktop                   > "${SOURCES}/${APP_NAME}.desktop"
           cp assets/icons/connected.png                       "${SOURCES}/${APP_NAME}.png"
 
+          # RPM version strings cannot contain hyphens — replace with tildes.
+          # e.g. "0.0.0-dev.abc1234" → "0.0.0~dev.abc1234"
+          #      "1.2.3"             → "1.2.3" (unchanged)
+          RPM_VERSION="${VERSION//-/~}"
+
           rpmbuild -bb \
-            --define "version ${VERSION}" \
+            --define "version ${RPM_VERSION}" \
             --define "buildarch x86_64" \
             --target x86_64 \
             packaging/rpm/${APP_NAME}.spec
 
           RPM_FILE=$(find "${HOME}/rpmbuild/RPMS" -name "*.rpm" | head -1)
-          OUTPUT="dist/${APP_NAME}-${VERSION}-1.x86_64.rpm"
+          OUTPUT="dist/${APP_NAME}-${RPM_VERSION}-1.x86_64.rpm"
           cp "${RPM_FILE}" "${OUTPUT}"
           echo "Built: ${OUTPUT}"
           rpm -qip "${OUTPUT}"
@@ -246,7 +251,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rpm-x86_64
-          path: dist/${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-1.x86_64.rpm
+          # Use the sanitised version in the path too
+          path: dist/${{ env.APP_NAME }}-*-1.x86_64.rpm
           if-no-files-found: error
 
   # ── 6. Build AppImage (amd64) ─────────────────────────────────────────────
