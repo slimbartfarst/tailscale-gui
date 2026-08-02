@@ -33,17 +33,23 @@ jobs:
     steps:
       - name: Determine version
         id: ver
+        shell: bash
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Tagged release — strip the "refs/tags/v" prefix
             VERSION="${GITHUB_REF#refs/tags/v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             VERSION="0.0.0-pr.${GITHUB_EVENT_NUMBER}"
           else
-            SHA="${GITHUB_SHA::8}"
-            VERSION="0.0.0-dev.${SHA}"
+            # Branch push — use short SHA (bash substring is safe with shell: bash)
+            VERSION="0.0.0-dev.${GITHUB_SHA:0:8}"
           fi
+          # Sanitise: replace any character that is illegal in all package formats
+          # (RPM forbids hyphens and slashes; we normalise here at the source)
+          VERSION="${VERSION//\//.}"   # slashes → dots
+          VERSION="${VERSION//-/~}"   # hyphens → tildes (RPM pre-release convention)
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${VERSION}"
+          echo "Version resolved: ${VERSION}"
         env:
           GITHUB_EVENT_NUMBER: ${{ github.event.number }}
 
@@ -154,7 +160,11 @@ jobs:
           BINARY="dist/${APP_NAME}-linux-amd64"
           chmod +x "${BINARY}"
 
-          PKG_DIR="build/deb/${APP_NAME}_${VERSION}_amd64"
+          # deb version: tildes are valid in dpkg but hyphens are more conventional.
+          # Convert the source-sanitised version back to hyphen form for .deb.
+          DEB_VERSION="${VERSION//\~/-}"
+
+          PKG_DIR="build/deb/${APP_NAME}_${DEB_VERSION}_amd64"
           mkdir -p "${PKG_DIR}/DEBIAN"
           mkdir -p "${PKG_DIR}/usr/bin"
           mkdir -p "${PKG_DIR}/usr/share/applications"
@@ -172,7 +182,7 @@ jobs:
 
           INSTALLED_SIZE=$(du -sk "${PKG_DIR}/usr" | cut -f1)
           sed \
-            -e "s/VERSION_PLACEHOLDER/${VERSION}/" \
+            -e "s/VERSION_PLACEHOLDER/${DEB_VERSION}/" \
             -e "s/ARCH_PLACEHOLDER/amd64/" \
             -e "s/SIZE_PLACEHOLDER/${INSTALLED_SIZE}/" \
             packaging/deb/control \
@@ -182,16 +192,16 @@ jobs:
           install -m 755 packaging/deb/postrm   "${PKG_DIR}/DEBIAN/postrm"
 
           dpkg-deb --build --root-owner-group "${PKG_DIR}" \
-            "dist/${APP_NAME}_${VERSION}_amd64.deb"
+            "dist/${APP_NAME}_${DEB_VERSION}_amd64.deb"
 
-          echo "Built: dist/${APP_NAME}_${VERSION}_amd64.deb"
-          dpkg-deb --info "dist/${APP_NAME}_${VERSION}_amd64.deb"
+          echo "Built: dist/${APP_NAME}_${DEB_VERSION}_amd64.deb"
+          dpkg-deb --info "dist/${APP_NAME}_${DEB_VERSION}_amd64.deb"
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v7
         with:
           name: deb-amd64
-          path: dist/${{ env.APP_NAME }}_${{ needs.version.outputs.version }}_amd64.deb
+          path: dist/${{ env.APP_NAME }}_*_amd64.deb
           if-no-files-found: error
 
   # ── 5. Build .rpm package (x86_64) ────────────────────────────────────────
@@ -230,10 +240,10 @@ jobs:
             packaging/tailscale-gui.desktop                   > "${SOURCES}/${APP_NAME}.desktop"
           cp assets/icons/connected.png                       "${SOURCES}/${APP_NAME}.png"
 
-          # RPM version strings cannot contain hyphens — replace with tildes.
-          # e.g. "0.0.0-dev.abc1234" → "0.0.0~dev.abc1234"
-          #      "1.2.3"             → "1.2.3" (unchanged)
+          # Version is pre-sanitised in the version job (hyphens→tildes, slashes→dots).
+          # Apply the substitution again as a safety net in case of edge cases.
           RPM_VERSION="${VERSION//-/~}"
+          RPM_VERSION="${RPM_VERSION//\//.}"
 
           rpmbuild -bb \
             --define "version ${RPM_VERSION}" \
@@ -293,6 +303,9 @@ jobs:
           BINARY="dist/${APP_NAME}-linux-amd64"
           chmod +x "${BINARY}"
 
+          # AppImage filenames use hyphens conventionally - convert tildes back.
+          APP_VERSION="${VERSION//\~/-}"
+
           python3 scripts/generate_icons.py
 
           APPDIR="build/appimage/${APP_NAME}.AppDir"
@@ -309,7 +322,7 @@ jobs:
           cp assets/icons/connected.png               "${APPDIR}/${APP_NAME}.png"
           cp assets/icons/connected.png               "${APPDIR}/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
 
-          OUTPUT="dist/${APP_NAME}-${VERSION}-x86_64.AppImage"
+          OUTPUT="dist/${APP_NAME}-${APP_VERSION}-x86_64.AppImage"
           ARCH=x86_64 /tmp/appimagetool "${APPDIR}" "${OUTPUT}"
 
           echo "Built: ${OUTPUT}"
@@ -319,7 +332,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: appimage-amd64
-          path: dist/${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-x86_64.AppImage
+          path: dist/${{ env.APP_NAME }}-*-x86_64.AppImage
           if-no-files-found: error
 
   # ── 7. Create GitHub Release (tags only) ──────────────────────────────────
