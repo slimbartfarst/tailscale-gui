@@ -31,28 +31,29 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
+      - uses: actions/checkout@v7
+
       - name: Determine version
         id: ver
         shell: bash
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            # Tagged release — strip the "refs/tags/v" prefix
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            # Tagged release — strip "refs/tags/v"
+            RAW="${GITHUB_REF#refs/tags/v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            VERSION="0.0.0-pr.${GITHUB_EVENT_NUMBER}"
+            RAW="0.0.0-pr.${{ github.event.number }}"
           else
-            # Branch push — use short SHA (bash substring is safe with shell: bash)
-            VERSION="0.0.0-dev.${GITHUB_SHA:0:8}"
+            # Branch push — get short SHA directly from git
+            SHA=$(git rev-parse --short=8 HEAD)
+            RAW="0.0.0-dev.${SHA}"
           fi
-          # Sanitise: replace any character that is illegal in all package formats
-          # (RPM forbids hyphens and slashes; we normalise here at the source)
-          # Sanitise using tr (POSIX, works in any shell):
-          # Replace slashes with dots, hyphens with tildes
-          VERSION=$(echo "${VERSION}" | tr '/' '.' | tr '-' '~')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Sanitise into a single safe token:
+          #   slashes  → dots   (remove path separators)
+          #   hyphens  → tildes (RPM pre-release convention; deb/appimage convert back)
+          #   spaces   → dots   (belt-and-braces)
+          VERSION=$(printf '%s' "${RAW}" | tr '/' '.' | tr ' ' '.' | tr '-' '~')
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "Version resolved: ${VERSION}"
-        env:
-          GITHUB_EVENT_NUMBER: ${{ github.event.number }}
 
   # ── 2. Run tests ──────────────────────────────────────────────────────────
   test:
@@ -161,8 +162,8 @@ jobs:
           BINARY="dist/${APP_NAME}-linux-amd64"
           chmod +x "${BINARY}"
 
-          # deb version: convert tildes back to hyphens using tr (safe, no metachar issues).
-          DEB_VERSION=$(echo "${VERSION}" | tr '~' '-')
+          # Convert tildes back to hyphens; strip any slashes as final safety net
+          DEB_VERSION=$(printf '%s' "${VERSION}" | tr '~' '-' | tr '/' '.' | tr ' ' '.')
 
           PKG_DIR="build/deb/${APP_NAME}_${DEB_VERSION}_amd64"
           mkdir -p "${PKG_DIR}/DEBIAN"
@@ -241,8 +242,8 @@ jobs:
             packaging/tailscale-gui.desktop                   > "${SOURCES}/${APP_NAME}.desktop"
           cp assets/icons/connected.png                       "${SOURCES}/${APP_NAME}.png"
 
-          # RPM version: ensure tildes (pre-release) and no slashes.
-          RPM_VERSION=$(echo "${VERSION}" | tr '-' '~' | tr '/' '.')
+          # RPM version: ensure tildes (pre-release) and no slashes, using printf for safety
+          RPM_VERSION=$(printf '%s' "${VERSION}" | tr '-' '~' | tr '/' '.' | tr ' ' '.')
 
           rpmbuild -bb \
             --define "version ${RPM_VERSION}" \
@@ -302,8 +303,8 @@ jobs:
           BINARY="dist/${APP_NAME}-linux-amd64"
           chmod +x "${BINARY}"
 
-          # AppImage filenames use hyphens conventionally - convert tildes back.
-          APP_VERSION=$(echo "${VERSION}" | tr '~' '-')
+          # Convert tildes back to hyphens; strip any remaining slashes as final safety net
+          APP_VERSION=$(printf '%s' "${VERSION}" | tr '~' '-' | tr '/' '.' | tr ' ' '.')
 
           python3 scripts/generate_icons.py
 
