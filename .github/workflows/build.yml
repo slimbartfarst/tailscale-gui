@@ -46,8 +46,9 @@ jobs:
           fi
           # Sanitise: replace any character that is illegal in all package formats
           # (RPM forbids hyphens and slashes; we normalise here at the source)
-          VERSION="${VERSION//\//.}"   # slashes → dots
-          VERSION="${VERSION//-/~}"   # hyphens → tildes (RPM pre-release convention)
+          # Sanitise using tr (POSIX, works in any shell):
+          # Replace slashes with dots, hyphens with tildes
+          VERSION=$(echo "${VERSION}" | tr '/' '.' | tr '-' '~')
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version resolved: ${VERSION}"
         env:
@@ -160,9 +161,8 @@ jobs:
           BINARY="dist/${APP_NAME}-linux-amd64"
           chmod +x "${BINARY}"
 
-          # deb version: tildes are valid in dpkg but hyphens are more conventional.
-          # Convert the source-sanitised version back to hyphen form for .deb.
-          DEB_VERSION="${VERSION//\~/-}"
+          # deb version: convert tildes back to hyphens using tr (safe, no metachar issues).
+          DEB_VERSION=$(echo "${VERSION}" | tr '~' '-')
 
           PKG_DIR="build/deb/${APP_NAME}_${DEB_VERSION}_amd64"
           mkdir -p "${PKG_DIR}/DEBIAN"
@@ -181,10 +181,11 @@ jobs:
             "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
 
           INSTALLED_SIZE=$(du -sk "${PKG_DIR}/usr" | cut -f1)
+          # Use | as sed delimiter so version strings with dots/tildes don't break s///
           sed \
-            -e "s/VERSION_PLACEHOLDER/${DEB_VERSION}/" \
-            -e "s/ARCH_PLACEHOLDER/amd64/" \
-            -e "s/SIZE_PLACEHOLDER/${INSTALLED_SIZE}/" \
+            -e "s|VERSION_PLACEHOLDER|${DEB_VERSION}|" \
+            -e "s|ARCH_PLACEHOLDER|amd64|" \
+            -e "s|SIZE_PLACEHOLDER|${INSTALLED_SIZE}|" \
             packaging/deb/control \
             > "${PKG_DIR}/DEBIAN/control"
 
@@ -240,10 +241,8 @@ jobs:
             packaging/tailscale-gui.desktop                   > "${SOURCES}/${APP_NAME}.desktop"
           cp assets/icons/connected.png                       "${SOURCES}/${APP_NAME}.png"
 
-          # Version is pre-sanitised in the version job (hyphens→tildes, slashes→dots).
-          # Apply the substitution again as a safety net in case of edge cases.
-          RPM_VERSION="${VERSION//-/~}"
-          RPM_VERSION="${RPM_VERSION//\//.}"
+          # RPM version: ensure tildes (pre-release) and no slashes.
+          RPM_VERSION=$(echo "${VERSION}" | tr '-' '~' | tr '/' '.')
 
           rpmbuild -bb \
             --define "version ${RPM_VERSION}" \
@@ -304,7 +303,7 @@ jobs:
           chmod +x "${BINARY}"
 
           # AppImage filenames use hyphens conventionally - convert tildes back.
-          APP_VERSION="${VERSION//\~/-}"
+          APP_VERSION=$(echo "${VERSION}" | tr '~' '-')
 
           python3 scripts/generate_icons.py
 
