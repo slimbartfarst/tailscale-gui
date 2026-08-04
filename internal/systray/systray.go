@@ -340,6 +340,9 @@ func (a *App) refreshPeers() {
 // ── Status application ────────────────────────────────────────────────────────
 
 func (a *App) applyFullStatus(st *ipnstate.Status) {
+	if st == nil {
+		return
+	}
 	// Self row
 	if st.Self != nil && len(st.TailscaleIPs) > 0 {
 		ipStr := ""
