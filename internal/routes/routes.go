@@ -104,10 +104,12 @@ func (m *Manager) approvedRoutes(ctx context.Context) (map[netip.Prefix]bool, er
 }
 
 // primaryRoutes extracts PrimaryRoutes from a PeerStatus as a plain slice.
-// In tailscale v1.56+ PrimaryRoutes is views.Slice[netip.Prefix]; we use
-// the .AsSlice() method which returns []netip.Prefix regardless of the
-// underlying representation.
+// PrimaryRoutes is *views.Slice[netip.Prefix] in tailscale v1.78 — a pointer
+// that is nil when the node has no approved routes or hasn't fully connected.
 func primaryRoutes(self *ipnstate.PeerStatus) []netip.Prefix {
+	if self == nil || self.PrimaryRoutes == nil {
+		return nil
+	}
 	return self.PrimaryRoutes.AsSlice()
 }
 

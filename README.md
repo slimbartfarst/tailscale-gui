@@ -51,29 +51,11 @@ No networking code written here. The daemon does all the hard work.
 
 ---
 
-## What to build next
-
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
-  distribution with sandboxed access to the Tailscale socket.
-- **System settings panel** — expose TerminalCmd, SSHUser, TaildropDir in
-  the status window so users never need to edit config.json manually.
-- **Taildrop receive notification with count** — show number of pending files
-  in the tray icon badge (requires libunity or DBus counter on the app icon).
-
----- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
-  the auth URL from `st.AuthURL` automatically in the browser.
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest for Flathub
-  distribution with sandboxed access to the Tailscale socket.
-- **System settings integration** — expose TerminalCmd and SSHUser in the
-  status window so users can configure them without editing JSON.
-
----
-
 ## Prerequisites
 
 | Requirement | Install |
 |---|---|
-| Go 1.23+ | https://go.dev/dl/ |
+| Go 1.26+ | https://go.dev/dl/ |
 | `tailscaled` running | `sudo tailscaled &` or systemd |
 | Operator permission | `sudo tailscale set --operator=$USER` |
 | D-Bus + StatusNotifierItem | GNOME, KDE, COSMIC, waybar, hyprpanel |
@@ -222,12 +204,6 @@ assets/icons/warning.png
 
 Then `make build`. The icons are embedded into the binary via `go:embed`.
 
----
-
-## What to build next
-
-Update go to the latest which is 1.26.5
-Update tailscale to latest version which is 102.2
 ---
 
 ## Licence

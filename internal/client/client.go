@@ -1,6 +1,6 @@
 // internal/client/client.go
 //
-// Wraps tailscale.com/client/tailscale so the rest of the app stays insulated
+// Wraps tailscale.com/client/local so the rest of the app stays insulated
 // from the upstream API. All daemon interaction lives here.
 package client
 
@@ -12,7 +12,7 @@ import (
 	"sort"
 	"time"
 
-	tsclient "tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/ipn"
 	"tailscale.com/tailcfg"
 	"tailscale.com/ipn/ipnstate"
@@ -20,13 +20,13 @@ import (
 
 // Client is a handle to the local tailscaled daemon.
 type Client struct {
-	lc *tsclient.LocalClient
+	lc *local.Client
 }
 
 // New returns a Client connected to tailscaled.
 // socketPath may be empty to use the platform default.
 func New(ctx context.Context, socketPath string) (*Client, error) {
-	lc := &tsclient.LocalClient{}
+	lc := &local.Client{}
 	if socketPath != "" {
 		lc.Socket = socketPath
 	}
@@ -237,13 +237,13 @@ func (c *Client) watchOnce(ctx context.Context, fn func(StateChange)) error {
 
 // ── File sharing (Taildrop) ───────────────────────────────────────────────────
 
-// LocalClient exposes the underlying tsclient.LocalClient for packages that need it
+// LocalClient exposes the underlying local.Client for packages that need it
 // directly (e.g. Taildrop, Ping).
-func (c *Client) LocalClient() *tsclient.LocalClient {
+func (c *Client) LocalClient() *local.Client {
 	return c.lc
 }
 
-// PushFile sends a file to a peer. Thin pass-through to tsclient.LocalClient.PushFile.
+// PushFile sends a file to a peer. Thin pass-through to local.Client.PushFile.
 func (c *Client) PushFile(ctx context.Context, target tailcfg.StableNodeID, size int64, name string, r io.Reader) error {
 	return c.lc.PushFile(ctx, target, size, name, r)
 }

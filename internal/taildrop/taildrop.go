@@ -10,7 +10,7 @@
 //      was restarting (5-second interval).
 //
 // Sending:
-//   Wraps tsclient.LocalClient.PushFile with a progress channel.
+//   Wraps local.Client.PushFile with a progress channel.
 package taildrop
 
 import (
@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	tsclient "tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/tailcfg"
 	"tailscale.com/ipn/ipnstate"
 
@@ -204,7 +204,7 @@ func (m *Manager) drainWaitingFiles(
 // saveFile claims a single waiting file from tailscaled and writes it to disk.
 func (m *Manager) saveFile(
 	ctx context.Context,
-	lc *tsclient.LocalClient,
+	lc *local.Client,
 	name string,
 	from string,
 ) FileEvent {
