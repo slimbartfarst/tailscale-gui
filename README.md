@@ -226,19 +226,8 @@ Then `make build`. The icons are embedded into the binary via `go:embed`.
 
 ## What to build next
 
-- **Subnet route advertising** — `tailscale.com/client/local` exposes
-  `AdvertiseRoutes`; add a submenu to toggle which local subnets this device
-  advertises to the tailnet.
-- **SSH peer launch** — add an "SSH…" button per-peer in the status window
-  that runs `xterm -e ssh <hostname>` (or the user's preferred terminal).
-- **Multi-account / user switching** — watch for `ipn.NeedsLogin` and open
-  the auth URL from `st.AuthURL` automatically in the browser.
-- **Flatpak packaging** — add a `packaging/flatpak/` manifest so the app
-  can be distributed via Flathub with sandboxed access to the Tailscale socket.
-- **Taildrop receive notifications with "Open file" action** — use
-  `gdbus` or `go-notify` to attach an action button to the notification
-  that opens the saved file directly.
-
+Update go to the latest which is 1.26.5
+Update tailscale to latest version which is 102.2
 ---
 
 ## Licence
