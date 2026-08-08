@@ -57,7 +57,9 @@ with the `.deb`, `.rpm`, and `.AppImage` files attached.
 | File | Architectures |
 |---|---|
 | `tailscale-gui_0.1.0_amd64.deb` | amd64 |
+| `tailscale-gui_0.1.0_arm64.deb` | arm64 |
 | `tailscale-gui-0.1.0-1.x86_64.rpm` | x86_64 |
+| `tailscale-gui-0.1.0-1.aarch64.rpm` | aarch64 |
 | `tailscale-gui-0.1.0-x86_64.AppImage` | amd64 |
 
 ## 7. Replace placeholder icons

@@ -77,8 +77,10 @@ jobs:
             libglib2.0-dev \
             pkg-config
 
-      - name: Download modules
-        run: go mod download
+      - name: Tidy and download modules
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Vet
         run: go vet ./...
@@ -119,8 +121,10 @@ jobs:
       - name: Generate placeholder icons
         run: python3 scripts/generate_icons.py
 
-      - name: Download modules
-        run: go mod download
+      - name: Tidy and download modules
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Build binary
         env:
