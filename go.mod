@@ -4,17 +4,17 @@ go 1.26
 
 require (
 	fyne.io/systray v1.11.1-0.20250812065214-4856ac3adc3c
-	golang.org/x/net v0.53.0
-	tailscale.com v1.98.8
+	golang.org/x/net v0.56.0
+	tailscale.com v1.102.2
 )
 
 // replace directives map vanity import domains to their GitHub sources.
 // Required in network-restricted environments; harmless when proxy.golang.org
 // is available (GitHub Actions uses the proxy which handles these natively).
 replace (
-	tailscale.com      => github.com/tailscale/tailscale v1.98.8
+	tailscale.com      => github.com/tailscale/tailscale v1.102.2
 	fyne.io/systray    => github.com/fyne-io/systray v1.11.1-0.20250812065214-4856ac3adc3c
-	golang.org/x/net   => github.com/golang/net v0.53.0
+	golang.org/x/net   => github.com/golang/net v0.56.0
 	golang.org/x/crypto => github.com/golang/crypto v0.31.0
 	golang.org/x/exp   => github.com/golang/exp v0.0.0-20240119083558-1b970713d09a
 	golang.org/x/image => github.com/golang/image v0.18.0
